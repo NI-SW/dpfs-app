@@ -45,7 +45,8 @@ export default function App() {
   });
   const [traceResults, setTraceResults] = useState({
     traceResult: "等待发起溯源请求...",
-    aiRiskReport: "等待发起溯源请求..."
+    aiRiskReport: "等待发起溯源请求...",
+    metaIngredients: []
   });
   const [traceCollapsed, setTraceCollapsed] = useState({});
   const [tradeForm, setTradeForm] = useState({
@@ -331,138 +332,127 @@ export default function App() {
   const renderTraceResult = (value) => {
     const parsed = parseTraceResult(value);
     if (parsed === null) return "未返回商品溯源结果";
+    if (typeof parsed === 'string') return parsed;
 
-    const toPrimitiveText = (v) => {
-      if (v === null) return 'null';
-      if (v === undefined) return 'undefined';
-      if (typeof v === 'string') return v;
-      if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-      try {
-        return JSON.stringify(v);
-      } catch (e) {
-        return String(v);
-      }
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+    // 分区：基本信息、交易信息、配料信息
+    const baseInfo = {};
+    const tradeInfo = parsed.trade_info || [];
+    const ingredientInfo = parsed.ingredient_info || [];
+    Object.entries(parsed).forEach(([k, v]) => {
+      if (k !== 'trade_info' && k !== 'ingredient_info') baseInfo[k] = v;
+    });
+
+    // 友好化 key 名
+    const friendlyKey = (k) => {
+      const map = {
+        '类型': '产品类型', '生产日期': '生产日期', '包装': '包装方式',
+        '品牌': '品牌', '净含量': '净含量', '保质期': '保质期',
+        'Ingredient Name': '配料名', 'Ingredient Percentage': '占比',
+        'IngredientInfo': '子配料'
+      };
+      return map[k] || k;
     };
-    const isObject = (v) => v && typeof v === 'object' && !Array.isArray(v);
-    const pathKeyOf = (path) => path.map((p) => String(p)).join('\u001f');
 
-    const Line = ({ indent, left, right, lineKey }) => (
-      <div key={lineKey} className="flex items-start justify-between gap-6" style={{ paddingLeft: indent * 18 }}>
-        <div className="min-w-0 break-words">{left}</div>
-        {right ? <div className="shrink-0">{right}</div> : null}
+    // 基本信息标签颜色
+    const keyColor = (k) => {
+      const lk = k.toLowerCase();
+      if (lk.includes('品牌')) return 'text-violet-400';
+      if (lk.includes('类型')) return 'text-cyan-400';
+      if (lk.includes('日期') || lk.includes('保质')) return 'text-amber-400';
+      if (lk.includes('净含量') || lk.includes('净重')) return 'text-rose-400';
+      return 'text-emerald-400';
+    };
+
+    // 渲染配料树（递归）
+    const renderIngredientTree = (items, depth = 0) => {
+      if (!Array.isArray(items) || items.length === 0) return null;
+      return (
+        <div className={depth > 0 ? 'ml-3 border-l-2 border-emerald-500/15 pl-3' : ''}>
+          {items.map((ing, idx) => {
+            const name = ing['Ingredient Name'] || '未知';
+            const pct = ing['Ingredient Percentage'] || '0';
+            const children = ing['IngredientInfo'];
+            const hasChildren = Array.isArray(children) && children.length > 0;
+            const isObj2 = isObj(children) && Object.keys(children).length > 0;
+            const key = `ing-${depth}-${idx}-${name}`;
+
+            return (
+              <div key={key} className="mb-1.5">
+                <div className="flex items-center gap-2 py-1">
+                  {depth > 0 && <span className="text-emerald-600/40 text-[10px]">●</span>}
+                  <span className="font-semibold text-emerald-300 text-sm">{name}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono font-bold">
+                    {pct}%
+                  </span>
+                  {(hasChildren || isObj2) && (
+                    <span className="text-[10px] text-emerald-600/40">▸ 递归溯源</span>
+                  )}
+                </div>
+                {(hasChildren || isObj2) && renderIngredientTree(
+                  hasChildren ? children : [children], depth + 1
+                )}
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-5">
+        {/* 基本信息 */}
+        {Object.keys(baseInfo).length > 0 && (
+          <div>
+            <div className="text-[10px] font-black tracking-[0.3em] uppercase text-emerald-500/60 mb-3 flex items-center gap-2">
+              <ShieldCheck size={12} /> 基本信息
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+              {Object.entries(baseInfo).map(([k, v]) => (
+                <div key={k} className="flex items-baseline gap-2 py-1 border-b border-white/5">
+                  <span className="text-[11px] font-bold text-slate-500 shrink-0">{friendlyKey(k)}</span>
+                  <span className={`text-sm font-semibold ${keyColor(k)} truncate`}>{String(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 交易信息 */}
+        {tradeInfo.length > 0 && (
+          <div>
+            <div className="text-[10px] font-black tracking-[0.3em] uppercase text-emerald-500/60 mb-3 flex items-center gap-2">
+              <Activity size={12} /> 交易信息
+            </div>
+            <div className="space-y-2">
+              {tradeInfo.map((trade, idx) => (
+                <div key={idx} className="bg-slate-800/40 rounded-xl p-3 border border-white/5">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    {Object.entries(trade).map(([k, v]) => (
+                      <div key={k} className="flex items-baseline gap-2">
+                        <span className="text-[10px] text-slate-500 shrink-0">{k}</span>
+                        <span className="text-xs text-emerald-400">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 配料溯源树 */}
+        {ingredientInfo.length > 0 && (
+          <div>
+            <div className="text-[10px] font-black tracking-[0.3em] uppercase text-emerald-500/60 mb-3 flex items-center gap-2">
+              <ListChecks size={12} /> 配料溯源
+            </div>
+            {renderIngredientTree(ingredientInfo)}
+          </div>
+        )}
       </div>
     );
-
-    const walk = (node, path, indent, label) => {
-      if (Array.isArray(node)) {
-        const hasLabel = label !== null && label !== undefined && String(label).length > 0;
-        const key = pathKeyOf(path);
-        const collapsed = traceCollapsed[key] !== false; // 默认为 true（折叠），只有显式为 false 才是展开
-
-        const headerLeft = hasLabel ? (
-          <span>
-            <span className="font-black">{label}</span>: [{node.length}]
-          </span>
-        ) : (
-          <span>[{node.length}]</span>
-        );
-
-        const headerRight = hasLabel ? (
-          <button
-            type="button"
-            onClick={() => setTraceCollapsed((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }))}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-emerald-400 hover:bg-white/5 transition-all"
-          >
-            <ChevronRight size={16} className={`transition-transform ${collapsed ? '' : 'rotate-90'}`} />
-          </button>
-        ) : null;
-
-        const header = (
-          <Line
-            indent={indent}
-            left={headerLeft}
-            right={headerRight}
-            lineKey={`h:${key}`}
-          />
-        );
-
-        if (collapsed && hasLabel) return [header];
-
-        if (node.length === 0) return [header];
-
-        const baseIndent = hasLabel ? indent + 1 : indent;
-        const children = node.flatMap((item, idx) => {
-          const itemLabel = `- [${idx}]`;
-          const itemPath = [...path, idx];
-          if (Array.isArray(item) || isObject(item)) return walk(item, itemPath, baseIndent, itemLabel);
-          return [
-            <Line
-              indent={baseIndent}
-              left={<span>{itemLabel}: {toPrimitiveText(item)}</span>}
-              right={null}
-              lineKey={`p:${pathKeyOf(itemPath)}`}
-            />
-          ];
-        });
-
-        return [header, ...children];
-      }
-
-      if (isObject(node)) {
-        const hasLabel = label !== null && label !== undefined && String(label).length > 0;
-        const key = pathKeyOf(path);
-        const header = hasLabel ? (
-          <Line
-            indent={indent}
-            left={<span className="font-black">{label}:</span>}
-            right={null}
-            lineKey={`o:${key}`}
-          />
-        ) : null;
-
-        const entries = Object.entries(node);
-        if (entries.length === 0) {
-          const empty = (
-            <Line
-              indent={indent}
-              left={<span>{hasLabel ? `${label}: {}` : '{}'}</span>}
-              right={null}
-              lineKey={`e:${key}`}
-            />
-          );
-          return [empty];
-        }
-
-        const baseIndent = hasLabel ? indent + 1 : indent;
-        const children = entries.flatMap(([k, v]) => {
-          const nextPath = [...path, k];
-          if (Array.isArray(v) || isObject(v)) return walk(v, nextPath, baseIndent, k);
-          return [
-            <Line
-              indent={baseIndent}
-              left={<span><span className="font-black">{k}</span>: {toPrimitiveText(v)}</span>}
-              right={null}
-              lineKey={`kv:${pathKeyOf(nextPath)}`}
-            />
-          ];
-        });
-
-        return header ? [header, ...children] : children;
-      }
-
-      const key = pathKeyOf(path);
-      const hasLabel = label !== null && label !== undefined && String(label).length > 0;
-      return [
-        <Line
-          indent={indent}
-          left={hasLabel ? <span><span className="font-black">{label}</span>: {toPrimitiveText(node)}</span> : <span>{toPrimitiveText(node)}</span>}
-          right={null}
-          lineKey={`v:${key}`}
-        />
-      ];
-    };
-
-    return <div className="space-y-2">{walk(parsed, ['root'], 0, null)}</div>;
   };
 
   const handleTrace = async () => {
@@ -501,7 +491,8 @@ export default function App() {
       if (result && (result.code === 200 || Number(result.code) === 200)) {
         setTraceResults({
           traceResult: result.trace_result,
-          aiRiskReport: result.ai_risk_report ? formatRiskInfo(result.ai_risk_report) : "未返回AI风险评估"
+          aiRiskReport: result.ai_risk_report ? formatRiskInfo(result.ai_risk_report) : "未返回AI风险评估",
+          metaIngredients: result.meta_ingredient_table || []
         });
         showToast(result.message || "溯源成功");
       } else {
@@ -640,138 +631,80 @@ export default function App() {
     }
   };
 
+  // 进入数据查询页时自动加载第一页
+  useEffect(() => {
+    if (isLoggedIn && activeTab === 'activity' && systemData.length === 0) {
+      handleFetchSystemData(0);
+    }
+    if (isLoggedIn && activeTab === 'risk_query' && riskProData.length === 0) {
+      handleFetchRiskProData(0);
+    }
+  }, [activeTab, isLoggedIn]);
+
   const systemProKeyOf = (item) => `${item?.group_name || ''}\u001f${item?.product_name || ''}\u001f${item?.trace_code_prefix || ''}`;
 
   const renderSystemProExtraInfo = (value) => {
-    const isObject = (v) => v && typeof v === 'object' && !Array.isArray(v);
-    const toPrimitiveText = (v) => {
-      if (v === null) return 'null';
-      if (v === undefined) return 'undefined';
-      if (typeof v === 'string') return v;
-      if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-      try {
-        return JSON.stringify(v);
-      } catch (e) {
-        return String(v);
-      }
-    };
-    const isKvArray = (arr) =>
-      Array.isArray(arr) &&
-      arr.length > 0 &&
-      arr.every((it) => isObject(it) && Object.keys(it).every((k) => k === 'key' || k === 'value') && 'key' in it);
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    if (value === null || value === undefined) return <div className="text-slate-400 text-sm">暂无信息</div>;
+    if (!isObj(value) && !Array.isArray(value)) return <div className="text-sm text-slate-700">{String(value)}</div>;
 
-    const Line = ({ indent, left, lineKey }) => (
-      <div key={lineKey} className="flex items-start gap-6" style={{ paddingLeft: indent * 18 }}>
-        <div className="min-w-0 break-words">{left}</div>
-      </div>
-    );
-
-    const walk = (node, path, indent, label) => {
-      const keyOf = (p) => p.map((x) => String(x)).join('\u001f');
-      const hasLabel = label !== null && label !== undefined && String(label).length > 0;
-
+    // 递归渲染对象/数组为卡片化 key-value 列表
+    const renderNode = (node, depth = 0) => {
       if (Array.isArray(node)) {
-        const key = keyOf(path);
-        const header = hasLabel ? (
-          <Line
-            indent={indent}
-            left={<span className="font-black text-slate-800">{label}</span>}
-            lineKey={`h:${key}`}
-          />
-        ) : null;
-
-        if (node.length === 0) {
-          const empty = (
-            <Line
-              indent={indent}
-              left={<span className="text-slate-400">{hasLabel ? `${label}: []` : '[]'}</span>}
-              lineKey={`e:${key}`}
-            />
+        // 判断是否是 [{key, value}] 结构
+        const isKvArr = node.length > 0 && node.every(it => isObj(it) && 'key' in it && 'value' in it);
+        if (isKvArr) {
+          return (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+              {node.map((kv, i) => (
+                <div key={i} className="flex items-baseline gap-2 py-1.5 border-b border-slate-100/80">
+                  <span className="text-xs font-bold text-slate-500 shrink-0">{String(kv.key)}</span>
+                  <span className="text-xs text-slate-700 truncate">{String(kv.value)}</span>
+                </div>
+              ))}
+            </div>
           );
-          return [empty];
         }
-
-        if (hasLabel && isKvArray(node)) {
-          const children = node.map((kv, i) => (
-            <Line
-              indent={indent + 1}
-              left={<span><span className="font-black">{toPrimitiveText(kv.key)}</span>: {toPrimitiveText(kv.value)}</span>}
-              lineKey={`kv:${key}\u001f${i}`}
-            />
-          ));
-          return header ? [header, ...children] : children;
-        }
-
-        const baseIndent = hasLabel ? indent + 1 : indent;
-        const children = node.flatMap((item, idx) => {
-          const itemLabel = `- [${idx}]`;
-          const itemPath = [...path, idx];
-          if (Array.isArray(item) || isObject(item)) return walk(item, itemPath, baseIndent, itemLabel);
-          return [
-            <Line
-              indent={baseIndent}
-              left={<span>{itemLabel}: {toPrimitiveText(item)}</span>}
-              lineKey={`p:${keyOf(itemPath)}`}
-            />
-          ];
-        });
-
-        return header ? [header, ...children] : children;
+        return (
+          <div className={depth > 0 ? 'ml-3 border-l-2 border-emerald-200 pl-3' : 'space-y-2'}>
+            {node.map((item, i) => (
+              <div key={i}>
+                {isObj(item) ? renderNode(item, depth + 1) : <span className="text-xs text-slate-600">{String(item)}</span>}
+              </div>
+            ))}
+          </div>
+        );
       }
 
-      if (isObject(node)) {
-        const key = keyOf(path);
-        const header = hasLabel ? (
-          <Line
-            indent={indent}
-            left={<span className="font-black text-slate-800">{label}</span>}
-            lineKey={`o:${key}`}
-          />
-        ) : null;
-
+      if (isObj(node)) {
         const entries = Object.entries(node);
-        if (entries.length === 0) {
-          const empty = (
-            <Line
-              indent={indent}
-              left={<span className="text-slate-400">{hasLabel ? `${label}: {}` : '{}'}</span>}
-              lineKey={`e:${key}`}
-            />
-          );
-          return [empty];
-        }
-
-        const baseIndent = hasLabel ? indent + 1 : indent;
-        const children = entries.flatMap(([k, v]) => {
-          const nextPath = [...path, k];
-          if (Array.isArray(v) || isObject(v)) return walk(v, nextPath, baseIndent, k);
-          return [
-            <Line
-              indent={baseIndent}
-              left={<span><span className="font-black">{k}</span>: {toPrimitiveText(v)}</span>}
-              lineKey={`kv:${keyOf(nextPath)}`}
-            />
-          ];
-        });
-
-        return header ? [header, ...children] : children;
+        if (entries.length === 0) return <div className="text-slate-400 text-xs">暂无信息</div>;
+        return (
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            {entries.map(([k, v]) => {
+              if (isObj(v) || Array.isArray(v)) {
+                return (
+                  <div key={k} className="col-span-2 py-2">
+                    <div className="text-[10px] font-black tracking-wider uppercase text-emerald-600/70 mb-2">{k}</div>
+                    {renderNode(v, depth + 1)}
+                  </div>
+                );
+              }
+              return (
+                <div key={k} className="flex items-baseline gap-2 py-1.5 border-b border-slate-100/80">
+                  <span className="text-xs font-bold text-slate-500 shrink-0">{k}</span>
+                  <span className="text-xs text-slate-700 truncate">{String(v)}</span>
+                </div>
+              );
+            })}
+          </div>
+        );
       }
 
-      const key = keyOf(path);
-      return [
-        <Line
-          indent={indent}
-          left={hasLabel ? <span><span className="font-black">{label}</span>: {toPrimitiveText(node)}</span> : <span>{toPrimitiveText(node)}</span>}
-          lineKey={`v:${key}`}
-        />
-      ];
+      return <span className="text-xs text-slate-600">{String(node)}</span>;
     };
 
-    if (value === null || value === undefined) return <div className="text-slate-400 font-medium">暂无信息</div>;
-    if (!isObject(value)) return <div className="space-y-2">{walk(value, ['root'], 0, null)}</div>;
-    const entries = Object.entries(value);
-    if (entries.length === 0) return <div className="text-slate-400 font-medium">暂无信息</div>;
-    return <div className="space-y-2">{walk(value, ['root'], 0, null)}</div>;
+    return <div className="py-1">{renderNode(value)}</div>;
   };
 
   const handleToggleSystemProBasic = async (item) => {
@@ -869,13 +802,13 @@ export default function App() {
                 为农产品供应链<br />注入<span className="text-emerald-500">智能与安全</span>
               </h2>
               <p className="text-slate-400 text-lg max-w-2xl leading-relaxed">
-                利用分布式账本与深度学习算法，实时监测、评估并阻断农产品流转过程中的潜在风险。
+                利用深度学习算法，实时监测、评估并阻断农产品流转过程中的潜在风险。
               </p>
             </div>
             <div className="lg:col-span-2 space-y-10 animate-in fade-in slide-in-from-right-6 duration-1000 delay-300">
               <div>
                 <h3 className="text-3xl font-extrabold tracking-tight mb-2">欢迎回来</h3>
-                <p className="text-slate-500">请使用您的管理账号进行身份验证。</p>
+                <p className="text-slate-500">请使用您的账号进行身份验证。</p>
               </div>
               <div className="space-y-6">
                 <div className="relative group">
@@ -917,18 +850,63 @@ export default function App() {
         }}
       />
 
-      <aside className="w-24 flex flex-col items-center py-10 bg-white border-r border-slate-100 z-50">
-        <div className="p-4 bg-slate-950 rounded-[2rem] text-emerald-500 mb-16 shadow-xl shadow-slate-200">
-          <Zap size={28} fill="currentColor" />
+      <aside className="w-56 flex flex-col bg-white border-r border-slate-100 z-50 shrink-0">
+        {/* Logo */}
+        <div className="px-5 py-6 flex items-center gap-3 border-b border-slate-50">
+          <div className="p-2.5 bg-slate-950 rounded-xl text-emerald-500 shadow-lg shadow-slate-200">
+            <Zap size={22} fill="currentColor" />
+          </div>
+          <div>
+            <div className="text-sm font-black text-slate-800 tracking-tight">DPFS</div>
+            <div className="text-[9px] font-bold text-slate-400 tracking-wider uppercase">食品溯源平台</div>
+          </div>
         </div>
-        <div className="flex-1 flex flex-col gap-10">
-          <button onClick={() => setActiveTab('dashboard')} className={`p-4 rounded-2xl transition-all ${activeTab === 'dashboard' ? 'bg-emerald-50 text-emerald-600 shadow-sm' : 'text-slate-300 hover:text-slate-600'}`}><LayoutDashboard size={26} /></button>
-          <button onClick={() => setActiveTab('trace')} className={`p-4 rounded-2xl transition-all ${activeTab === 'trace' ? 'bg-emerald-50 text-emerald-600 shadow-sm' : 'text-slate-300 hover:text-slate-600'}`}><Search size={26} /></button>
-          <button onClick={() => setActiveTab('make_trade')} className={`p-4 rounded-2xl transition-all ${activeTab === 'make_trade' ? 'bg-emerald-50 text-emerald-600 shadow-sm' : 'text-slate-300 hover:text-slate-600'}`}><Plus size={26} /></button>
-          <button onClick={() => setActiveTab('activity')} className={`p-4 rounded-2xl transition-all ${activeTab === 'activity' ? 'bg-emerald-50 text-emerald-600 shadow-sm' : 'text-slate-300 hover:text-slate-600'}`}><Activity size={26} /></button>
-          <button onClick={() => setActiveTab('risk_query')} className={`p-4 rounded-2xl transition-all ${activeTab === 'risk_query' ? 'bg-emerald-50 text-emerald-600 shadow-sm' : 'text-slate-300 hover:text-slate-600'}`}><ShieldCheck size={26} /></button>
+
+        {/* 导航菜单 */}
+        <nav className="flex-1 px-3 py-5 space-y-1">
+          <div className="px-3 mb-3 text-[9px] font-black tracking-[0.2em] uppercase text-slate-300">功能导航</div>
+          {[
+            { key: 'dashboard', icon: LayoutDashboard, label: '信息录入', desc: '产品风险评估' },
+            { key: 'trace', icon: Search, label: '商品溯源', desc: '溯源链路查询' },
+            { key: 'make_trade', icon: Plus, label: '创建交易', desc: '交易信息登记' },
+            { key: 'activity', icon: Activity, label: '数据查询', desc: '系统溯源数据查询' },
+            { key: 'risk_query', icon: ShieldCheck, label: '风险查询', desc: '安全风险评估' },
+          ].map(({ key, icon: Icon, label, desc }) => {
+            const active = activeTab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
+                  active
+                    ? 'bg-emerald-50 text-emerald-700 shadow-sm'
+                    : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'
+                }`}
+              >
+                <div className={`p-1.5 rounded-lg transition-all ${active ? 'bg-emerald-500 text-white' : 'bg-slate-50 text-slate-400 group-hover:bg-slate-100'}`}>
+                  <Icon size={16} />
+                </div>
+                <div className="min-w-0">
+                  <div className={`text-xs font-bold leading-tight ${active ? 'text-emerald-700' : 'text-slate-600 group-hover:text-slate-700'}`}>{label}</div>
+                  <div className={`text-[10px] leading-tight ${active ? 'text-emerald-500/70' : 'text-slate-300'}`}>{desc}</div>
+                </div>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* 底部退出 */}
+        <div className="px-3 pb-5 border-t border-slate-50 pt-3">
+          <button
+            onClick={() => setShowLogoutModal(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:bg-red-50 hover:text-red-500 transition-all group"
+          >
+            <div className="p-1.5 rounded-lg bg-slate-50 text-slate-300 group-hover:bg-red-50 group-hover:text-red-400 transition-all">
+              <LogOut size={16} />
+            </div>
+            <div className="text-xs font-bold text-slate-400 group-hover:text-red-500">退出登录</div>
+          </button>
         </div>
-        <button onClick={() => setShowLogoutModal(true)} className="p-4 text-slate-300 hover:text-red-500 transition-all"><LogOut size={28} /></button>
       </aside>
 
       <main className="flex-1 flex overflow-hidden">
@@ -1212,67 +1190,105 @@ export default function App() {
 
             {activeTab === 'activity' && (
               <div className="animate-in fade-in slide-in-from-left-4 duration-700">
-                <header className="mb-12 flex justify-between items-center">
-                  <div>
-                    <span className="text-[10px] font-black tracking-[0.3em] text-emerald-600 uppercase mb-3 block">System Database</span>
-                    <h2 className="text-4xl font-black text-slate-900 tracking-tight">系统溯源数据查询</h2>
+                <header className="mb-8 flex justify-between items-center">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 border border-emerald-100">
+                      <Activity size={20} />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-black text-slate-800 tracking-tight">系统溯源数据查询</h2>
+                      <p className="text-xs text-slate-400 mt-0.5">查询系统中已录入的产品溯源数据</p>
+                    </div>
                   </div>
-                  <button onClick={() => handleFetchSystemData(0)} className="px-8 py-4 bg-emerald-600 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-emerald-500 shadow-xl shadow-emerald-950/10 transition-all">
-                    <RefreshCw size={20} className={isLoading ? "animate-spin" : ""} /> 查询系统数据
+                  <button
+                    onClick={() => handleFetchSystemData(0)}
+                    disabled={isLoading}
+                    className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50"
+                  >
+                    <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                    查询系统数据
                   </button>
                 </header>
-                <div className="bg-white rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.02)] border border-slate-50 overflow-hidden mb-8">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50/50">
-                      <tr>
-                        <th className="px-8 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest">所在组</th>
-                        <th className="px-8 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest">产品名称</th>
-                        <th className="px-8 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest">溯源代码前缀</th>
-                        <th className="px-8 py-6 text-[11px] font-black text-slate-400 uppercase tracking-widest text-right"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {systemData.map((item, idx) => (
-                        <React.Fragment key={idx}>
-                          <tr className="hover:bg-slate-50/80 transition-colors group">
-                            <td className="px-8 py-6 font-medium text-slate-600">{item.group_name}</td>
-                            <td className="px-8 py-6 font-bold text-slate-800">{item.product_name}</td>
-                            <td className="px-8 py-6 font-mono text-xs text-emerald-600 truncate max-w-[300px]">{item.trace_code_prefix}</td>
-                            <td className="px-8 py-6 text-right">
-                              <button
-                                type="button"
-                                onClick={() => handleToggleSystemProBasic(item)}
-                                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-100 text-slate-600 font-black text-xs hover:text-emerald-600 hover:border-emerald-200 hover:bg-emerald-50/40 transition-all"
-                              >
-                                基本信息
-                                <ChevronRight size={16} className={`transition-transform ${systemProBasicOpen[systemProKeyOf(item)] ? 'rotate-90' : ''}`} />
-                              </button>
-                            </td>
-                          </tr>
-                          {systemProBasicOpen[systemProKeyOf(item)] && (
-                            <tr className="bg-slate-50/40">
-                              <td colSpan={4} className="px-8 py-6">
-                                {systemProBasicLoading[systemProKeyOf(item)] ? (
-                                  <div className="text-slate-400 font-medium">加载中...</div>
-                                ) : (
-                                  <div className="text-slate-600">
-                                    {renderSystemProExtraInfo(systemProBasicCache[systemProKeyOf(item)])}
+
+                {systemData.length === 0 && !isLoading ? (
+                  <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-16 flex flex-col items-center justify-center">
+                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-300 mb-4">
+                      <Search size={32} />
+                    </div>
+                    <div className="text-slate-400 font-semibold mb-1">暂无数据</div>
+                    <div className="text-slate-300 text-sm">点击上方按钮同步系统数据</div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {systemData.map((item, idx) => {
+                      const key = systemProKeyOf(item);
+                      const isOpen = systemProBasicOpen[key];
+                      return (
+                        <div key={idx} className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden transition-all hover:shadow-md">
+                          <div
+                            className="flex items-center gap-4 px-6 py-4 cursor-pointer select-none"
+                            onClick={() => handleToggleSystemProBasic(item)}
+                          >
+                            <div className="w-9 h-9 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600 shrink-0 border border-emerald-100">
+                              <Box size={16} />
+                            </div>
+                            <div className="flex-1 min-w-0 flex items-center gap-6">
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-800 text-sm truncate">{item.product_name}</div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  <span className="inline-flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md">{item.group_name}</span>
+                                </div>
+                              </div>
+                              <div className="font-mono text-[11px] text-emerald-600/80 bg-emerald-50/60 px-3 py-1 rounded-lg truncate max-w-[240px]" title={item.trace_code_prefix}>
+                                {item.trace_code_prefix}
+                              </div>
+                            </div>
+                            <ChevronRight size={18} className={`text-slate-300 transition-transform shrink-0 ${isOpen ? 'rotate-90' : ''}`} />
+                          </div>
+
+                          {isOpen && (
+                            <div className="border-t border-slate-50 bg-slate-50/30 px-6 py-5 animate-in fade-in slide-in-from-top-2 duration-300">
+                              {systemProBasicLoading[key] ? (
+                                <div className="flex items-center gap-2 text-slate-400 text-sm py-4 justify-center">
+                                  <RefreshCw size={14} className="animate-spin" />
+                                  加载中...
+                                </div>
+                              ) : (
+                                <div className="bg-white rounded-xl border border-slate-100 p-5">
+                                  <div className="text-[10px] font-black tracking-[0.2em] uppercase text-emerald-600/60 mb-3 flex items-center gap-1.5">
+                                    <ShieldCheck size={10} /> 基本信息
                                   </div>
-                                )}
-                              </td>
-                            </tr>
+                                  {renderSystemProExtraInfo(systemProBasicCache[key])}
+                                </div>
+                              )}
+                            </div>
                           )}
-                        </React.Fragment>
-                      ))}
-                    </tbody>
-                  </table>
-                  {systemData.length === 0 && !isLoading && <div className="py-20 text-center text-slate-300 italic font-medium">点击上方按钮同步系统数据</div>}
-                </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {systemTotal > 0 && (
-                  <div className="flex justify-center items-center gap-6">
-                    <button disabled={currentSystemPage === 0 || isLoading} onClick={() => handleFetchSystemData(currentSystemPage - 20)} className="p-4 bg-white rounded-xl border border-slate-100 disabled:opacity-30 hover:text-emerald-500 transition-all"><ChevronLeft size={20} /></button>
-                    <div className="text-sm font-bold text-slate-500">第 {Math.floor(currentSystemPage / 20) + 1} / {Math.ceil(systemTotal / 20)} 页 <span className="ml-3 text-slate-300 font-normal">(总计 {systemTotal} 条)</span></div>
-                    <button disabled={currentSystemPage + 20 >= systemTotal || isLoading} onClick={() => handleFetchSystemData(currentSystemPage + 20)} className="p-4 bg-white rounded-xl border border-slate-100 disabled:opacity-30 hover:text-emerald-500 transition-all"><ChevronRight size={20} /></button>
+                  <div className="flex justify-center items-center gap-3 mt-6">
+                    <button
+                      disabled={currentSystemPage === 0 || isLoading}
+                      onClick={() => handleFetchSystemData(currentSystemPage - 20)}
+                      className="px-4 py-2 bg-white rounded-lg border border-slate-100 text-slate-500 text-xs font-bold disabled:opacity-30 hover:text-emerald-600 hover:border-emerald-200 transition-all flex items-center gap-1"
+                    >
+                      <ChevronLeft size={14} /> 上一页
+                    </button>
+                    <div className="text-xs text-slate-400 font-medium px-4 py-2 bg-white rounded-lg border border-slate-50">
+                      第 <span className="text-slate-700 font-bold">{Math.floor(currentSystemPage / 20) + 1}</span> / {Math.ceil(systemTotal / 20)} 页
+                      <span className="ml-2 text-slate-300">共 {systemTotal} 条</span>
+                    </div>
+                    <button
+                      disabled={currentSystemPage + 20 >= systemTotal || isLoading}
+                      onClick={() => handleFetchSystemData(currentSystemPage + 20)}
+                      className="px-4 py-2 bg-white rounded-lg border border-slate-100 text-slate-500 text-xs font-bold disabled:opacity-30 hover:text-emerald-600 hover:border-emerald-200 transition-all flex items-center gap-1"
+                    >
+                      下一页 <ChevronRight size={14} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -1324,18 +1340,18 @@ export default function App() {
         )}
 
         {activeTab === 'trace' && (
-          <div className="flex-[1.35] h-full bg-slate-900 p-12 flex flex-col relative text-white animate-in slide-in-from-right-full duration-500">
+          <div className="flex-[1.35] h-full bg-slate-900 p-10 flex flex-col relative text-white animate-in slide-in-from-right-full duration-500">
             <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#10b981 0.8px, transparent 0.8px)', backgroundSize: '32px 32px' }}></div>
 
             <div className="relative z-10 h-full flex flex-col">
-              <header className="flex justify-between items-center mb-10">
+              <header className="flex justify-between items-center mb-8">
                 <div className="flex items-center gap-3 text-emerald-500">
                   <Activity size={22} className="animate-pulse" />
                   <span className="text-xs font-mono font-black tracking-[0.4em] uppercase">Trace Engine</span>
                 </div>
               </header>
 
-              <div className="flex-1 bg-slate-950/40 rounded-[3.5rem] border border-white/5 backdrop-blur-3xl p-10 flex flex-col overflow-hidden">
+              <div className="flex-1 bg-slate-950/40 rounded-[3rem] border border-white/5 backdrop-blur-3xl p-8 flex flex-col overflow-hidden">
                 {isLoading ? (
                   <div className="flex-1 flex flex-col items-center justify-center">
                     <div className="relative mb-10">
@@ -1346,30 +1362,56 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="flex-1 flex flex-col min-h-0 animate-in fade-in slide-in-from-right-6 duration-1000">
-                    <div className="flex items-center gap-3 mb-8 shrink-0">
-                      <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500 border border-emerald-500/20">
-                        <ListChecks size={24} />
+                    <div className="flex items-center gap-3 mb-6 shrink-0">
+                      <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 border border-emerald-500/20">
+                        <ListChecks size={20} />
                       </div>
-                      <h3 className="text-2xl font-black text-white">溯源结果</h3>
+                      <h3 className="text-xl font-black text-white">溯源结果</h3>
                     </div>
 
-                    {traceForm.aiRisk ? (
-                      <div className="flex-1 min-h-0 flex flex-col gap-6">
-                        <div className="flex-[1.35] min-h-0 bg-slate-900/80 rounded-[2.5rem] p-8 border border-white/5 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner custom-scrollbar">
-                          <div className="text-xs font-mono font-black tracking-[0.35em] uppercase text-emerald-400/80 mb-4">商品溯源结果</div>
-                          <div className="font-mono text-sm text-emerald-400/90">{renderTraceResult(traceResults.traceResult)}</div>
+                    <div className="flex-1 min-h-0 flex flex-col gap-5">
+                      {/* 溯源详情 */}
+                      <div className="flex-1 min-h-0 bg-slate-900/80 rounded-[2rem] p-6 border border-white/5 overflow-y-auto shadow-inner custom-scrollbar">
+                        {renderTraceResult(traceResults.traceResult)}
+                      </div>
+
+                      {/* 元配料整合表 */}
+                      {traceResults.metaIngredients && traceResults.metaIngredients.length > 0 && (
+                        <div className="shrink-0 bg-slate-900/80 rounded-[2rem] p-6 border border-white/5 shadow-inner">
+                          <div className="text-[10px] font-black tracking-[0.3em] uppercase text-amber-400/80 mb-4 flex items-center gap-2">
+                            <ShieldCheck size={12} /> 元配料整合表
+                          </div>
+                          <div className="space-y-2">
+                            {traceResults.metaIngredients.map((item, idx) => {
+                              const pctNum = parseFloat(item.percentage) || 0;
+                              return (
+                                <div key={idx} className="flex items-center gap-3">
+                                  <span className="text-sm font-semibold text-slate-200 w-20 shrink-0 truncate" title={item.name}>{item.name}</span>
+                                  <div className="flex-1 h-5 bg-slate-800/60 rounded-full overflow-hidden relative">
+                                    <div
+                                      className="h-full rounded-full bg-gradient-to-r from-amber-500/80 to-amber-400/60 transition-all duration-700"
+                                      style={{ width: `${Math.min(pctNum, 100)}%` }}
+                                    />
+                                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white/90 font-mono">
+                                      {item.percentage}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs font-mono font-bold text-amber-400 w-16 text-right shrink-0">{item.grams}g</span>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div className="flex-1 min-h-0 bg-slate-900/80 rounded-[2.5rem] p-8 border border-white/5 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner custom-scrollbar">
-                          <div className="text-xs font-mono font-black tracking-[0.35em] uppercase text-blue-400/80 mb-4">AI风险评估</div>
+                      )}
+
+                      {/* AI 风险评估 */}
+                      {traceForm.aiRisk && (
+                        <div className="flex-1 min-h-0 bg-slate-900/80 rounded-[2rem] p-6 border border-white/5 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner custom-scrollbar">
+                          <div className="text-[10px] font-black tracking-[0.35em] uppercase text-blue-400/80 mb-4">AI 风险评估</div>
                           <div className="font-mono text-sm text-blue-400/90">{traceResults.aiRiskReport}</div>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="flex-1 min-h-0 bg-slate-900/80 rounded-[2.5rem] p-10 border border-white/5 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner custom-scrollbar">
-                        <div className="text-xs font-mono font-black tracking-[0.35em] uppercase text-emerald-400/80 mb-4">商品溯源结果</div>
-                        <div className="font-mono text-sm text-emerald-400/90">{renderTraceResult(traceResults.traceResult)}</div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
