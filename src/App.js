@@ -41,7 +41,7 @@ export default function App() {
   // 角色权限表（与后端 role_permissions 表一致）
   const ROLE_PERMISSIONS = {
     admin:        ['*'],
-    supervisor:   ['product:list', 'product:trace', 'product:risk:view', 'system:audit:view'],
+    supervisor:   ['product:list', 'product:drop', 'product:trace', 'product:risk:view', 'system:audit:view'],
     manufacturer: ['product:list', 'product:trace', 'product:risk:create', 'trade:create'],
     consumer:     ['product:trace'],
   };
@@ -108,6 +108,10 @@ export default function App() {
   const [profileView, setProfileView] = useState('info');
   const [editForm, setEditForm] = useState({ real_name: '', phone: '', mail: '', description: '' });
   const [editLoading, setEditLoading] = useState(false);
+
+  // --- 删除产品确认弹窗 ---
+  const [dropModal, setDropModal] = useState({ open: false, item: null });
+  const [dropLoading, setDropLoading] = useState(false);
 
   useEffect(() => {
     const savedToken = localStorage.getItem('dpfs_token');
@@ -681,6 +685,45 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // --- 删除溯源产品 ---
+  const handleDropTracablePro = async () => {
+    if (!dropModal.item) return;
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) { showToast("会话已过期，请重新登录"); return; }
+    setDropLoading(true);
+    try {
+      const res = await fetch('/api/drop_tracable_pro', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_token: parseInt(token),
+          schema: dropModal.item.group_name,
+          product_name: dropModal.item.product_name
+        })
+      });
+      const result = await res.json();
+      if (result.code === 200) {
+        showToast('删除成功');
+        setDropModal({ open: false, item: null });
+        // 刷新当前页
+        handleFetchSystemData(currentSystemPage);
+      } else {
+        showToast(`删除失败: ${result.message || '未知错误'}`);
+      }
+    } catch (e) {
+      showToast(`删除失败: ${e?.message || '网络错误'}`);
+    } finally {
+      setDropLoading(false);
+    }
+  };
+
+  // 检查当前用户是否有 product:drop 权限
+  const hasDropPermission = () => {
+    const role = localStorage.getItem('dpfs_role') || '';
+    const perms = ROLE_PERMISSIONS[role] || [];
+    return perms.includes('*') || perms.includes('product:drop');
   };
 
   // 进入数据查询页时自动加载第一页
@@ -1405,6 +1448,15 @@ export default function App() {
                                 {item.trace_code_prefix}
                               </div>
                             </div>
+                            {hasDropPermission() && (
+                              <button
+                                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all"
+                                title="删除此产品"
+                                onClick={(e) => { e.stopPropagation(); setDropModal({ open: true, item }); }}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
                             <ChevronRight size={18} className={`text-slate-300 transition-transform shrink-0 ${isOpen ? 'rotate-90' : ''}`} />
                           </div>
 
@@ -1855,6 +1907,40 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* 删除产品确认弹窗 */}
+      {dropModal.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-300 p-4">
+          <div className="bg-white rounded-[2.5rem] p-10 max-w-sm w-full shadow-2xl border border-slate-100 transform animate-in zoom-in-95">
+            <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-500 mb-6 mx-auto">
+              <Trash2 size={32} />
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 mb-2 text-center">确认删除？</h3>
+            <p className="text-slate-500 mb-2 text-center text-sm">
+              即将删除溯源产品：
+            </p>
+            <div className="bg-slate-50 rounded-xl px-4 py-3 mb-6 text-center">
+              <div className="font-bold text-slate-800 text-sm">{dropModal.item?.product_name}</div>
+              <div className="text-xs text-slate-400 mt-1">{dropModal.item?.group_name}</div>
+            </div>
+            <p className="text-red-500/70 text-xs text-center mb-6">此操作不可撤销，产品及其关联数据将被永久删除</p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setDropModal({ open: false, item: null })}
+                disabled={dropLoading}
+                className="flex-1 py-4 rounded-2xl bg-slate-100 font-bold text-slate-600 hover:bg-slate-200 transition-all disabled:opacity-50"
+              >取消</button>
+              <button
+                onClick={handleDropTracablePro}
+                disabled={dropLoading}
+                className="flex-1 py-4 rounded-2xl bg-red-600 font-bold text-white hover:bg-red-700 shadow-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {dropLoading ? <><RefreshCw size={16} className="animate-spin" /> 删除中...</> : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
