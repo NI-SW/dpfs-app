@@ -3,7 +3,7 @@ import {
   Plus, Trash2, LogOut, ShieldCheck, Activity, Cpu,
   CheckCircle, Box, ListChecks, ArrowRight,
   User, Lock, LayoutDashboard, Zap, Search, ChevronRight,
-  RefreshCw, ChevronLeft, Check
+  RefreshCw, ChevronLeft, Check, Pencil, Save, Hash
 } from 'lucide-react';
 import ParticleBackground from './ParticleBackground';
 
@@ -28,6 +28,32 @@ const LogoutModal = ({ isOpen, onClose, onConfirm }) => {
 };
 
 export default function App() {
+  // ─── 页面权限映射 ───
+  // 每个导航页面对应的后端权限码，null 表示所有已登录用户可见
+  const PAGE_PERMISSIONS = {
+    dashboard:   'product:risk:create',
+    trace:       'product:trace',
+    make_trade:  'trade:create',
+    activity:    'product:list',
+    risk_query:  'product:risk:view',
+    profile:     null,
+  };
+  // 角色权限表（与后端 role_permissions 表一致）
+  const ROLE_PERMISSIONS = {
+    admin:        ['*'],
+    supervisor:   ['product:list', 'product:trace', 'product:risk:view', 'system:audit:view'],
+    manufacturer: ['product:list', 'product:trace', 'product:risk:create', 'trade:create'],
+    consumer:     ['product:trace'],
+  };
+  // 检查当前用户是否有权限访问某页面
+  const hasPagePermission = (pageKey) => {
+    const required = PAGE_PERMISSIONS[pageKey];
+    if (!required) return true;
+    const role = localStorage.getItem('dpfs_role') || '';
+    const perms = ROLE_PERMISSIONS[role] || [];
+    return perms.includes('*') || perms.includes(required);
+  };
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -76,6 +102,12 @@ export default function App() {
   const [currentRiskProPage, setCurrentRiskProPage] = useState(0);
   const [riskProOpen, setRiskProOpen] = useState({});
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [userInfo, setUserInfo] = useState(null);
+  const [pwdForm, setPwdForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwdLoading, setPwdLoading] = useState(false);
+  const [profileView, setProfileView] = useState('info');
+  const [editForm, setEditForm] = useState({ real_name: '', phone: '', mail: '', description: '' });
+  const [editLoading, setEditLoading] = useState(false);
 
   useEffect(() => {
     const savedToken = localStorage.getItem('dpfs_token');
@@ -83,6 +115,19 @@ export default function App() {
   }, []);
 
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  // 获取用户首页（导航栏第一个有权限的页面）
+  const getUserHomePage = () => {
+    return ['dashboard','trace','make_trade','activity','risk_query','profile']
+      .find(key => hasPagePermission(key)) || 'profile';
+  };
+
+  // 当前 activeTab 无权限时自动跳转到首页
+  useEffect(() => {
+    if (isLoggedIn && !hasPagePermission(activeTab)) {
+      setActiveTab(getUserHomePage());
+    }
+  }, [isLoggedIn, activeTab]);
 
   const [formData, setFormData] = useState({
     modeName: '', productName: '', quantity: '',
@@ -369,7 +414,7 @@ export default function App() {
     const renderIngredientTree = (items, depth = 0) => {
       if (!Array.isArray(items) || items.length === 0) return null;
       return (
-        <div className={depth > 0 ? 'ml-3 border-l-2 border-emerald-500/15 pl-3' : ''}>
+        <div className={depth > 0 ? 'ml-2.5 border-l border-emerald-500/10 pl-3' : ''}>
           {items.map((ing, idx) => {
             const name = ing['Ingredient Name'] || '未知';
             const pct = ing['Ingredient Percentage'] || '0';
@@ -379,15 +424,15 @@ export default function App() {
             const key = `ing-${depth}-${idx}-${name}`;
 
             return (
-              <div key={key} className="mb-1.5">
-                <div className="flex items-center gap-2 py-1">
-                  {depth > 0 && <span className="text-emerald-600/40 text-[10px]">●</span>}
-                  <span className="font-semibold text-emerald-300 text-sm">{name}</span>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono font-bold">
+              <div key={key} className="mb-1">
+                <div className="flex items-center gap-2 py-0.5 group cursor-default">
+                  {depth > 0 && <span className="text-emerald-600/30 text-[8px]">●</span>}
+                  <span className="text-[12px] font-semibold text-emerald-300/90 group-hover:text-emerald-200 transition-colors">{name}</span>
+                  <span className="text-[10px] px-1.5 py-px rounded-md bg-emerald-500/8 text-emerald-400/70 font-mono font-semibold">
                     {pct}%
                   </span>
                   {(hasChildren || isObj2) && (
-                    <span className="text-[10px] text-emerald-600/40">▸ 递归溯源</span>
+                    <span className="text-[9px] text-emerald-600/30 opacity-0 group-hover:opacity-100 transition-opacity">▸ 递归溯源</span>
                   )}
                 </div>
                 {(hasChildren || isObj2) && renderIngredientTree(
@@ -401,18 +446,18 @@ export default function App() {
     };
 
     return (
-      <div className="space-y-5">
+      <div className="space-y-4">
         {/* 基本信息 */}
         {Object.keys(baseInfo).length > 0 && (
           <div>
-            <div className="text-[10px] font-black tracking-[0.3em] uppercase text-emerald-500/60 mb-3 flex items-center gap-2">
-              <ShieldCheck size={12} /> 基本信息
+            <div className="text-[10px] font-bold tracking-[0.15em] uppercase text-emerald-500/50 mb-2.5 flex items-center gap-1.5">
+              <ShieldCheck size={10} /> 基本信息
             </div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            <div className="grid grid-cols-2 gap-x-5 gap-y-1.5">
               {Object.entries(baseInfo).map(([k, v]) => (
-                <div key={k} className="flex items-baseline gap-2 py-1 border-b border-white/5">
-                  <span className="text-[11px] font-bold text-slate-500 shrink-0">{friendlyKey(k)}</span>
-                  <span className={`text-sm font-semibold ${keyColor(k)} truncate`}>{String(v)}</span>
+                <div key={k} className="flex items-baseline gap-2 py-1.5 border-b border-white/[0.04]">
+                  <span className="text-[10px] font-semibold text-slate-500 shrink-0">{friendlyKey(k)}</span>
+                  <span className={`text-xs font-semibold ${keyColor(k)} truncate`}>{String(v)}</span>
                 </div>
               ))}
             </div>
@@ -422,17 +467,18 @@ export default function App() {
         {/* 交易信息 */}
         {tradeInfo.length > 0 && (
           <div>
-            <div className="text-[10px] font-black tracking-[0.3em] uppercase text-emerald-500/60 mb-3 flex items-center gap-2">
-              <Activity size={12} /> 交易信息
+            <div className="text-[10px] font-bold tracking-[0.15em] uppercase text-emerald-500/50 mb-2.5 flex items-center gap-1.5">
+              <Activity size={10} /> 交易信息
             </div>
             <div className="space-y-2">
               {tradeInfo.map((trade, idx) => (
-                <div key={idx} className="bg-slate-800/40 rounded-xl p-3 border border-white/5">
+                <div key={idx} className="bg-white/[0.03] rounded-lg p-3 border border-white/[0.04]">
+                  <div className="text-[9px] text-emerald-500/40 font-mono mb-1.5">交易 #{idx + 1}</div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {Object.entries(trade).map(([k, v]) => (
-                      <div key={k} className="flex items-baseline gap-2">
-                        <span className="text-[10px] text-slate-500 shrink-0">{k}</span>
-                        <span className="text-xs text-emerald-400">{String(v)}</span>
+                      <div key={k} className="flex items-baseline gap-1.5">
+                        <span className="text-[9px] text-slate-500 shrink-0">{k}</span>
+                        <span className="text-[11px] text-emerald-400/80">{String(v)}</span>
                       </div>
                     ))}
                   </div>
@@ -445,8 +491,8 @@ export default function App() {
         {/* 配料溯源树 */}
         {ingredientInfo.length > 0 && (
           <div>
-            <div className="text-[10px] font-black tracking-[0.3em] uppercase text-emerald-500/60 mb-3 flex items-center gap-2">
-              <ListChecks size={12} /> 配料溯源
+            <div className="text-[10px] font-bold tracking-[0.15em] uppercase text-emerald-500/50 mb-2.5 flex items-center gap-1.5">
+              <ListChecks size={10} /> 配料溯源
             </div>
             {renderIngredientTree(ingredientInfo)}
           </div>
@@ -458,7 +504,7 @@ export default function App() {
   const handleTrace = async () => {
     const token = localStorage.getItem('dpfs_token');
     if (!token) return alert("请先登录");
-    if (!traceForm.traceCode.trim()) return showToast("请输入商品溯源代码");
+    if (!traceForm.traceCode.trim()) return showToast("请输入溯源码");
 
     setIsLoading(true);
     const payload = {
@@ -490,8 +536,8 @@ export default function App() {
 
       if (result && (result.code === 200 || Number(result.code) === 200)) {
         setTraceResults({
-          traceResult: result.trace_result,
-          aiRiskReport: result.ai_risk_report ? formatRiskInfo(result.ai_risk_report) : "未返回AI风险评估",
+          traceResult: result.trace_result_json || result.trace_result,
+          aiRiskReport: result.ai_risk_report ? formatRiskInfo(result.ai_risk_report) : "未返回AI个性化评估",
           metaIngredients: result.meta_ingredient_table || []
         });
         showToast(result.message || "溯源成功");
@@ -589,6 +635,12 @@ export default function App() {
         setRiskProData(result.pro_list || []);
         setCurrentRiskProPage(beginIndex);
         setRiskProOpen({});
+      } else if (result && (result.code === 0 || Number(result.code) === 0)) {
+        // 栏目为空 / 无更多数据，静默处理，不弹框
+        setRiskProTotal(0);
+        setRiskProData([]);
+        setCurrentRiskProPage(beginIndex);
+        setRiskProOpen({});
       } else {
         alert(result?.message || "查询失败");
       }
@@ -659,7 +711,7 @@ export default function App() {
               {node.map((kv, i) => (
                 <div key={i} className="flex items-baseline gap-2 py-1.5 border-b border-slate-100/80">
                   <span className="text-xs font-bold text-slate-500 shrink-0">{String(kv.key)}</span>
-                  <span className="text-xs text-slate-700 truncate">{String(kv.value)}</span>
+                  <span className="text-xs text-slate-700 select-all break-all">{String(kv.value)}</span>
                 </div>
               ))}
             </div>
@@ -691,9 +743,9 @@ export default function App() {
                 );
               }
               return (
-                <div key={k} className="flex items-baseline gap-2 py-1.5 border-b border-slate-100/80">
+                <div key={k} className="flex items-baseline gap-2 py-1.5 border-b border-slate-100/80 group">
                   <span className="text-xs font-bold text-slate-500 shrink-0">{k}</span>
-                  <span className="text-xs text-slate-700 truncate">{String(v)}</span>
+                  <span className="text-xs text-slate-700 select-all break-all">{String(v)}</span>
                 </div>
               );
             })}
@@ -766,6 +818,7 @@ export default function App() {
       const result = await response.json();
       if (result.code === 0) {
         localStorage.setItem('dpfs_token', result.user_token);
+        localStorage.setItem('dpfs_role', result.role);
         setIsLoggedIn(true);
       } else {
         alert(result.message || "身份验证失败");
@@ -776,6 +829,94 @@ export default function App() {
       setIsLoading(false);
     }
   };
+
+  const handleFetchUserInfo = async () => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    try {
+      const res = await fetch('/api/user_info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: parseInt(token) })
+      });
+      const data = await res.json();
+      if (data.code === 200) {
+        setUserInfo(data);
+      }
+    } catch (e) {
+      console.error('Fetch user info failed:', e);
+    }
+  };
+
+  const handleUpdatePassword = async () => {
+    if (!pwdForm.oldPassword || !pwdForm.newPassword || !pwdForm.confirmPassword) {
+      return showToast('请填写所有密码字段');
+    }
+    if (pwdForm.newPassword !== pwdForm.confirmPassword) {
+      return showToast('两次输入的新密码不一致');
+    }
+    if (pwdForm.newPassword.length < 4) {
+      return showToast('新密码至少4个字符');
+    }
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    setPwdLoading(true);
+    try {
+      const res = await fetch('/api/update_password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_token: parseInt(token),
+          old_password: pwdForm.oldPassword,
+          new_password: pwdForm.newPassword
+        })
+      });
+      const data = await res.json();
+      if (data.code === 200) {
+        showToast('密码修改成功');
+        setPwdForm({ oldPassword: '', newPassword: '', confirmPassword: '' });
+      } else {
+        showToast(data.message || '密码修改失败');
+      }
+    } catch (e) {
+      showToast('密码修改失败: ' + e.message);
+    } finally {
+      setPwdLoading(false);
+    }
+  };
+
+  const handleUpdateUserInfo = async () => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    setEditLoading(true);
+    try {
+      const res = await fetch('/api/update_user_info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: parseInt(token), ...editForm })
+      });
+      const data = await res.json();
+      if (data.code === 200) {
+        showToast('信息修改成功');
+        setProfileView('info');
+        setUserInfo(null);
+        handleFetchUserInfo();
+      } else {
+        showToast(data.message || '信息修改失败');
+      }
+    } catch (e) {
+      showToast('信息修改失败: ' + e.message);
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // 进入个人中心页时自动加载用户信息
+  useEffect(() => {
+    if (isLoggedIn && activeTab === 'profile' && !userInfo) {
+      handleFetchUserInfo();
+    }
+  }, [activeTab, isLoggedIn]);
 
   if (!isLoggedIn) {
     return (
@@ -845,6 +986,7 @@ export default function App() {
         onClose={() => setShowLogoutModal(false)}
         onConfirm={() => {
           localStorage.removeItem('dpfs_token');
+          localStorage.removeItem('dpfs_role');
           setIsLoggedIn(false);
           setShowLogoutModal(false);
         }}
@@ -871,12 +1013,13 @@ export default function App() {
             { key: 'make_trade', icon: Plus, label: '创建交易', desc: '交易信息登记' },
             { key: 'activity', icon: Activity, label: '数据查询', desc: '系统溯源数据查询' },
             { key: 'risk_query', icon: ShieldCheck, label: '风险查询', desc: '安全风险评估' },
-          ].map(({ key, icon: Icon, label, desc }) => {
+            { key: 'profile', icon: User, label: '个人中心', desc: '用户信息管理' },
+          ].filter(({ key }) => hasPagePermission(key)).map(({ key, icon: Icon, label, desc }) => {
             const active = activeTab === key;
             return (
               <button
                 key={key}
-                onClick={() => setActiveTab(key)}
+                onClick={() => { setActiveTab(key); if (key !== 'profile') setProfileView('info'); }}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left group ${
                   active
                     ? 'bg-emerald-50 text-emerald-700 shadow-sm'
@@ -910,8 +1053,8 @@ export default function App() {
       </aside>
 
       <main className="flex-1 flex overflow-hidden">
-        <div className={`h-full overflow-y-auto p-12 custom-scrollbar transition-all duration-500 ${(activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query') ? 'flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'flex-[0.85]' : 'flex-[1.3]')}`}>
-          <div className={`${(activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
+        <div className={`h-full overflow-y-auto p-12 custom-scrollbar transition-all duration-500 ${(activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile') ? 'flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'flex-[0.9]' : 'flex-[1.3]')}`}>
+          <div className={`${(activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
 
             {activeTab === 'dashboard' && (
               <>
@@ -986,49 +1129,64 @@ export default function App() {
 
             {activeTab === 'trace' && (
               <div className="animate-in fade-in slide-in-from-left-4 duration-700">
-                <header className="mb-12">
-                  <span className="text-[10px] font-black tracking-[0.3em] text-emerald-600 uppercase mb-3 block">Product Traceability</span>
-                  <h2 className="text-4xl font-black text-slate-900 tracking-tight">商品溯源</h2>
+                <header className="mb-10">
+                  <span className="text-[10px] font-black tracking-[0.3em] text-emerald-600 uppercase mb-2 block">Product Traceability</span>
+                  <h2 className="text-3xl font-black text-slate-900 tracking-tight">商品溯源</h2>
+                  <p className="text-sm text-slate-400 mt-2">输入溯源代码，追踪商品从原料到成品的完整链路</p>
                 </header>
 
-                <div className="space-y-8">
-                  <div className="bg-white p-10 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.02)] border border-slate-50">
-                    <div className="flex items-center gap-3 mb-8">
-                      <div className="w-2 h-8 bg-emerald-500 rounded-full"></div>
-                      <h3 className="font-bold text-lg">溯源参数</h3>
+                <div className="space-y-6">
+                  <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100/80">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
+                        <Search size={16} className="text-emerald-600" />
+                      </div>
+                      <h3 className="font-bold text-base text-slate-800">溯源查询</h3>
                     </div>
 
-                    <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">商品溯源代码</label>
-                    <input
-                      value={traceForm.traceCode}
-                      onChange={(e) => setTraceForm({ ...traceForm, traceCode: e.target.value })}
-                      className="w-full px-6 py-5 rounded-2xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all font-mono font-bold text-slate-700 mb-8"
-                      placeholder="输入商品溯源代码"
-                    />
+                    <label className="block text-xs font-semibold text-slate-500 mb-2">商品溯源代码</label>
+                    <div className="relative mb-6">
+                      <input
+                        value={traceForm.traceCode}
+                        onChange={(e) => setTraceForm({ ...traceForm, traceCode: e.target.value })}
+                        className="w-full pl-10 pr-6 py-4 rounded-xl bg-slate-50/80 border border-slate-200/60 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all font-mono font-semibold text-slate-700 placeholder:text-slate-300"
+                        placeholder="输入20位溯源码"
+                      />
+                      <Hash size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300" />
+                    </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
+                    <label className="block text-xs font-semibold text-slate-500 mb-3">查询选项</label>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
                       {[
-                        { key: 'traceDetail', title: '返回详细交易信息' },
-                        { key: 'ingreDetail', title: '返回详细配料信息' },
-                        { key: 'aiRisk', title: '返回AI风险评估信息' }
-                      ].map((opt) => (
-                        <div
-                          key={opt.key}
-                          onClick={() => setTraceForm({ ...traceForm, [opt.key]: !traceForm[opt.key] })}
-                          className={`p-5 rounded-2xl border-2 cursor-pointer text-center text-xs font-black transition-all ${traceForm[opt.key] ? 'border-emerald-500 bg-emerald-50 text-emerald-600' : 'border-slate-100 text-slate-400 hover:border-emerald-200'}`}
-                        >
-                          {opt.title}
-                        </div>
-                      ))}
+                        { key: 'traceDetail', title: '详细交易信息', desc: '包含交易流转记录', icon: Activity },
+                        { key: 'ingreDetail', title: '详细配料信息', desc: '配料溯源树与占比', icon: ListChecks },
+                        { key: 'aiRisk', title: 'AI个性化评估', desc: '智能分析报告', icon: ShieldCheck }
+                      ].map((opt) => {
+                        const Icon = opt.icon;
+                        const active = traceForm[opt.key];
+                        return (
+                          <div
+                            key={opt.key}
+                            onClick={() => setTraceForm({ ...traceForm, [opt.key]: !active })}
+                            className={`p-4 rounded-xl border-2 cursor-pointer transition-all group ${active ? 'border-emerald-400 bg-emerald-50/60 shadow-sm shadow-emerald-100' : 'border-slate-100 bg-white hover:border-emerald-200 hover:shadow-sm'}`}
+                          >
+                            <div className="flex items-center gap-2.5 mb-1.5">
+                              <Icon size={14} className={`transition-colors ${active ? 'text-emerald-600' : 'text-slate-300 group-hover:text-emerald-400'}`} />
+                              <span className={`text-sm font-bold transition-colors ${active ? 'text-emerald-700' : 'text-slate-500'}`}>{opt.title}</span>
+                            </div>
+                            <p className={`text-[11px] pl-[22px] transition-colors ${active ? 'text-emerald-500/70' : 'text-slate-300'}`}>{opt.desc}</p>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     <button
                       onClick={handleTrace}
                       disabled={isLoading}
-                      className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black text-xl hover:bg-emerald-600 transition-all transform hover:-translate-y-1 shadow-xl shadow-slate-200 flex items-center justify-center gap-3 disabled:opacity-50"
+                      className="w-full py-4 bg-gradient-to-r from-slate-800 to-slate-900 text-white rounded-xl font-bold text-base hover:from-emerald-600 hover:to-emerald-700 transition-all transform hover:-translate-y-0.5 shadow-lg shadow-slate-200/80 hover:shadow-emerald-200/80 flex items-center justify-center gap-2.5 disabled:opacity-40 disabled:hover:translate-y-0"
                     >
-                      {isLoading ? <RefreshCw className="animate-spin" size={24} /> : <Search size={24} />}
-                      进行溯源
+                      {isLoading ? <RefreshCw className="animate-spin" size={20} /> : <Search size={18} />}
+                      {isLoading ? '溯源扫描中...' : '开始溯源'}
                     </button>
                   </div>
                 </div>
@@ -1239,7 +1397,11 @@ export default function App() {
                                   <span className="inline-flex items-center gap-1 bg-slate-50 px-2 py-0.5 rounded-md">{item.group_name}</span>
                                 </div>
                               </div>
-                              <div className="font-mono text-[11px] text-emerald-600/80 bg-emerald-50/60 px-3 py-1 rounded-lg truncate max-w-[240px]" title={item.trace_code_prefix}>
+                              <div
+                                className="font-mono text-[11px] text-emerald-600/80 bg-emerald-50/60 px-3 py-1 rounded-lg cursor-pointer select-all hover:bg-emerald-100 transition-colors"
+                                title={item.trace_code_prefix}
+                                onClick={(e) => { e.stopPropagation(); try { const ta = document.createElement('textarea'); ta.value = item.trace_code_prefix; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); showToast('溯源码已复制'); } catch(err) { showToast('复制失败'); } }}
+                              >
                                 {item.trace_code_prefix}
                               </div>
                             </div>
@@ -1293,10 +1455,275 @@ export default function App() {
                 )}
               </div>
             )}
+
+            {activeTab === 'profile' && (
+              <div className="animate-in fade-in slide-in-from-left-4 duration-700">
+                <header className="mb-8">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      {profileView !== 'info' && (
+                        <button
+                          onClick={() => setProfileView('info')}
+                          className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 hover:text-slate-700 transition-all"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                      )}
+                      <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 border border-emerald-100">
+                        {profileView === 'info' ? <User size={20} /> : profileView === 'password' ? <Lock size={20} /> : <Pencil size={20} />}
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">
+                          {profileView === 'info' ? '个人中心' : profileView === 'password' ? '修改密码' : '修改信息'}
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {profileView === 'info' ? '查看账户信息与安全设置' : profileView === 'password' ? '更新账户登录密码' : '编辑个人基础信息'}
+                        </p>
+                      </div>
+                    </div>
+                    {profileView === 'info' && (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => {
+                            setProfileView('edit');
+                            setEditForm({ real_name: userInfo?.real_name || '', phone: userInfo?.phone || '', mail: userInfo?.mail || '', description: userInfo?.description || '' });
+                          }}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-white text-slate-700 rounded-xl font-bold text-sm border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-all"
+                        >
+                          <Pencil size={14} />
+                          修改信息
+                        </button>
+                        <button
+                          onClick={() => { setProfileView('password'); setPwdForm({ oldPassword: '', newPassword: '', confirmPassword: '' }); }}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-all shadow-lg shadow-slate-200"
+                        >
+                          <Lock size={14} />
+                          修改密码
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </header>
+
+                {profileView === 'info' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* 左栏：头像 + 基础信息 */}
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-2">
+                        <ShieldCheck size={14} className="text-emerald-500" />
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">基础信息</span>
+                      </div>
+                      <div className="p-6">
+                        {userInfo ? (
+                          <div>
+                            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-slate-100">
+                              <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center text-white text-2xl font-black shadow-lg shadow-emerald-500/20">
+                                {(userInfo.real_name || userInfo.username || 'U')[0].toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-800 text-lg">{userInfo.real_name || userInfo.username}</div>
+                                <div className="text-xs text-slate-400">@{userInfo.username} · ID: {userInfo.uid}</div>
+                              </div>
+                            </div>
+                            {[
+                              { label: '用户名', value: userInfo.username, icon: '👤' },
+                              { label: '姓名', value: userInfo.real_name || '—', icon: '🧑' },
+                              { label: '角色', value: userInfo.role === 'admin' ? '管理员' : userInfo.role, icon: '🔑' },
+                              { label: '个人描述', value: userInfo.description || '—', icon: '📝' },
+                            ].map((item) => (
+                              <div key={item.label} className="flex items-start gap-3 py-3 border-b border-slate-50 last:border-0">
+                                <span className="text-sm mt-0.5">{item.icon}</span>
+                                <span className="text-xs font-bold text-slate-400 w-16 shrink-0 pt-0.5">{item.label}</span>
+                                <span className="text-sm font-semibold text-slate-700 break-all">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center py-8 text-slate-400">
+                            <RefreshCw size={16} className="animate-spin mr-2" />
+                            加载中...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 右栏：联系信息 + 系统信息 */}
+                    {userInfo && (
+                      <div className="space-y-6">
+                        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                          <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-2">
+                            <span className="text-sm">📱</span>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">联系方式</span>
+                          </div>
+                          <div className="p-6">
+                            {[
+                              { label: '手机号', value: userInfo.phone || '—', icon: '📱' },
+                              { label: '邮箱', value: userInfo.mail || '—', icon: '📧' },
+                            ].map((item) => (
+                              <div key={item.label} className="flex items-start gap-3 py-3 border-b border-slate-50 last:border-0">
+                                <span className="text-sm mt-0.5">{item.icon}</span>
+                                <span className="text-xs font-bold text-slate-400 w-16 shrink-0 pt-0.5">{item.label}</span>
+                                <span className="text-sm font-semibold text-slate-700 break-all">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                          <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-2">
+                            <span className="text-sm">⚙️</span>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">系统信息</span>
+                          </div>
+                          <div className="p-6">
+                            {[
+                              { label: '账户状态', value: userInfo.status === 'active' ? '✅ 正常' : userInfo.status, icon: '🛡️' },
+                              { label: '上次登录', value: userInfo.last_login || '—', icon: '🕐' },
+                              { label: '创建时间', value: userInfo.created_at || '—', icon: '📅' },
+                            ].map((item) => (
+                              <div key={item.label} className="flex items-start gap-3 py-3 border-b border-slate-50 last:border-0">
+                                <span className="text-sm mt-0.5">{item.icon}</span>
+                                <span className="text-xs font-bold text-slate-400 w-16 shrink-0 pt-0.5">{item.label}</span>
+                                <span className="text-sm font-semibold text-slate-700 break-all">{item.value}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {profileView === 'edit' && (
+                  <div className="max-w-lg">
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-2">
+                        <Pencil size={14} className="text-blue-500" />
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">编辑信息</span>
+                      </div>
+                      <div className="p-6 space-y-5">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">姓名</label>
+                          <input
+                            type="text"
+                            value={editForm.real_name}
+                            onChange={(e) => setEditForm({ ...editForm, real_name: e.target.value })}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700"
+                            placeholder="输入真实姓名"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">手机号</label>
+                          <input
+                            type="text"
+                            value={editForm.phone}
+                            onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700"
+                            placeholder="输入手机号"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">邮箱</label>
+                          <input
+                            type="text"
+                            value={editForm.mail}
+                            onChange={(e) => setEditForm({ ...editForm, mail: e.target.value })}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700"
+                            placeholder="输入邮箱地址"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">个人描述</label>
+                          <textarea
+                            value={editForm.description}
+                            onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                            rows={3}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700 resize-none"
+                            placeholder="输入个人描述"
+                          />
+                        </div>
+                        <div className="flex gap-3 pt-2">
+                          <button
+                            onClick={() => setProfileView('info')}
+                            className="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
+                          >
+                            取消
+                          </button>
+                          <button
+                            onClick={handleUpdateUserInfo}
+                            disabled={editLoading}
+                            className="flex-1 py-3.5 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                          >
+                            {editLoading ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                            保存修改
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {profileView === 'password' && (
+                  <div className="max-w-lg">
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-50 flex items-center gap-2">
+                        <Lock size={14} className="text-amber-500" />
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">修改密码</span>
+                      </div>
+                      <div className="p-6 space-y-5">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">当前密码</label>
+                          <input
+                            type="password"
+                            value={pwdForm.oldPassword}
+                            onChange={(e) => setPwdForm({ ...pwdForm, oldPassword: e.target.value })}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700"
+                            placeholder="输入当前密码"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">新密码</label>
+                          <input
+                            type="password"
+                            value={pwdForm.newPassword}
+                            onChange={(e) => setPwdForm({ ...pwdForm, newPassword: e.target.value })}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700"
+                            placeholder="输入新密码（至少4位）"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-2 ml-1">确认新密码</label>
+                          <input
+                            type="password"
+                            value={pwdForm.confirmPassword}
+                            onChange={(e) => setPwdForm({ ...pwdForm, confirmPassword: e.target.value })}
+                            className="w-full px-5 py-3.5 rounded-xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all text-sm font-medium text-slate-700"
+                            placeholder="再次输入新密码"
+                          />
+                        </div>
+                        <div className="flex gap-3 pt-2">
+                          <button
+                            onClick={() => setProfileView('info')}
+                            className="flex-1 py-3.5 bg-slate-100 text-slate-600 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
+                          >
+                            取消
+                          </button>
+                          <button
+                            onClick={handleUpdatePassword}
+                            disabled={pwdLoading}
+                            className="flex-1 py-3.5 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-emerald-600 transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2 disabled:opacity-50"
+                          >
+                            {pwdLoading ? <RefreshCw size={16} className="animate-spin" /> : <Check size={16} />}
+                            确认修改
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
-
-        {/* 右侧评估面板逻辑修改 */}
         {activeTab === 'dashboard' && (
           <div className="flex-1 h-full bg-slate-900 p-12 flex flex-col relative text-white animate-in slide-in-from-right-full duration-500">
             <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#10b981 0.8px, transparent 0.8px)', backgroundSize: '32px 32px' }}></div>
@@ -1340,63 +1767,70 @@ export default function App() {
         )}
 
         {activeTab === 'trace' && (
-          <div className="flex-[1.35] h-full bg-slate-900 p-10 flex flex-col relative text-white animate-in slide-in-from-right-full duration-500">
-            <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#10b981 0.8px, transparent 0.8px)', backgroundSize: '32px 32px' }}></div>
+          <div className="flex-[1.35] h-full bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800 p-8 flex flex-col relative text-white animate-in slide-in-from-right-full duration-500">
+            <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(#10b981 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
 
             <div className="relative z-10 h-full flex flex-col">
-              <header className="flex justify-between items-center mb-8">
-                <div className="flex items-center gap-3 text-emerald-500">
-                  <Activity size={22} className="animate-pulse" />
-                  <span className="text-xs font-mono font-black tracking-[0.4em] uppercase">Trace Engine</span>
+              <header className="flex justify-between items-center mb-6">
+                <div className="flex items-center gap-2.5 text-emerald-400">
+                  <Activity size={18} className={isLoading ? 'animate-pulse' : ''} />
+                  <span className="text-[11px] font-mono font-bold tracking-[0.3em] uppercase">Trace Engine</span>
                 </div>
+                {!isLoading && traceResults.traceResult && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-emerald-500/60 font-mono">
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                    SCANNED
+                  </div>
+                )}
               </header>
 
-              <div className="flex-1 bg-slate-950/40 rounded-[3rem] border border-white/5 backdrop-blur-3xl p-8 flex flex-col overflow-hidden">
+              <div className="flex-1 bg-white/[0.03] backdrop-blur-sm rounded-2xl border border-white/[0.06] p-6 flex flex-col overflow-hidden">
                 {isLoading ? (
                   <div className="flex-1 flex flex-col items-center justify-center">
-                    <div className="relative mb-10">
-                      <div className="w-32 h-32 border-2 border-emerald-500/10 border-t-emerald-500 rounded-full animate-spin"></div>
-                      <Cpu size={48} className="absolute inset-0 m-auto text-emerald-500 animate-pulse" />
+                    <div className="relative mb-8">
+                      <div className="w-24 h-24 border-2 border-emerald-500/10 border-t-emerald-400 rounded-full animate-spin"></div>
+                      <Cpu size={40} className="absolute inset-0 m-auto text-emerald-400 animate-pulse" />
                     </div>
-                    <h4 className="text-emerald-400 font-mono tracking-[0.5em] animate-pulse">DPFS TRACE SCANNING</h4>
+                    <h4 className="text-emerald-400/90 font-mono text-sm tracking-[0.3em] animate-pulse">DPFS TRACE SCANNING</h4>
+                    <p className="text-slate-500 text-xs mt-2">正在解析溯源链路...</p>
                   </div>
                 ) : (
-                  <div className="flex-1 flex flex-col min-h-0 animate-in fade-in slide-in-from-right-6 duration-1000">
-                    <div className="flex items-center gap-3 mb-6 shrink-0">
-                      <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500 border border-emerald-500/20">
-                        <ListChecks size={20} />
+                  <div className="flex-1 flex flex-col min-h-0 animate-in fade-in slide-in-from-right-4 duration-700">
+                    <div className="flex items-center gap-2.5 mb-5 shrink-0">
+                      <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-400 border border-emerald-500/10">
+                        <ListChecks size={16} />
                       </div>
-                      <h3 className="text-xl font-black text-white">溯源结果</h3>
+                      <h3 className="text-base font-bold text-white/90">溯源结果</h3>
                     </div>
 
-                    <div className="flex-1 min-h-0 flex flex-col gap-5">
+                    <div className="flex-1 min-h-0 flex flex-col gap-4">
                       {/* 溯源详情 */}
-                      <div className="flex-1 min-h-0 bg-slate-900/80 rounded-[2rem] p-6 border border-white/5 overflow-y-auto shadow-inner custom-scrollbar">
+                      <div className="flex-1 min-h-0 bg-white/[0.02] rounded-xl p-5 border border-white/[0.04] overflow-y-auto custom-scrollbar">
                         {renderTraceResult(traceResults.traceResult)}
                       </div>
 
                       {/* 元配料整合表 */}
                       {traceResults.metaIngredients && traceResults.metaIngredients.length > 0 && (
-                        <div className="shrink-0 bg-slate-900/80 rounded-[2rem] p-6 border border-white/5 shadow-inner">
-                          <div className="text-[10px] font-black tracking-[0.3em] uppercase text-amber-400/80 mb-4 flex items-center gap-2">
-                            <ShieldCheck size={12} /> 元配料整合表
+                        <div className="shrink-0 bg-white/[0.02] rounded-xl p-5 border border-white/[0.04]">
+                          <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-amber-400/70 mb-3 flex items-center gap-2">
+                            <ShieldCheck size={11} /> 元配料整合表
                           </div>
                           <div className="space-y-2">
                             {traceResults.metaIngredients.map((item, idx) => {
                               const pctNum = parseFloat(item.percentage) || 0;
                               return (
                                 <div key={idx} className="flex items-center gap-3">
-                                  <span className="text-sm font-semibold text-slate-200 w-20 shrink-0 truncate" title={item.name}>{item.name}</span>
-                                  <div className="flex-1 h-5 bg-slate-800/60 rounded-full overflow-hidden relative">
+                                  <span className="text-xs font-semibold text-slate-200 w-20 shrink-0 truncate" title={item.name}>{item.name}</span>
+                                  <div className="flex-1 h-4 bg-white/[0.04] rounded-full overflow-hidden relative">
                                     <div
-                                      className="h-full rounded-full bg-gradient-to-r from-amber-500/80 to-amber-400/60 transition-all duration-700"
+                                      className="h-full rounded-full bg-gradient-to-r from-amber-500/70 to-amber-400/50 transition-all duration-700"
                                       style={{ width: `${Math.min(pctNum, 100)}%` }}
                                     />
-                                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white/90 font-mono">
+                                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white/80 font-mono">
                                       {item.percentage}
                                     </span>
                                   </div>
-                                  <span className="text-xs font-mono font-bold text-amber-400 w-16 text-right shrink-0">{item.grams}g</span>
+                                  <span className="text-[11px] font-mono font-semibold text-amber-400/70 w-14 text-right shrink-0">{item.grams}g</span>
                                 </div>
                               );
                             })}
@@ -1406,9 +1840,11 @@ export default function App() {
 
                       {/* AI 风险评估 */}
                       {traceForm.aiRisk && (
-                        <div className="flex-1 min-h-0 bg-slate-900/80 rounded-[2rem] p-6 border border-white/5 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner custom-scrollbar">
-                          <div className="text-[10px] font-black tracking-[0.35em] uppercase text-blue-400/80 mb-4">AI 风险评估</div>
-                          <div className="font-mono text-sm text-blue-400/90">{traceResults.aiRiskReport}</div>
+                        <div className="flex-1 min-h-0 bg-white/[0.02] rounded-xl p-5 border border-white/[0.04] overflow-y-auto whitespace-pre-wrap leading-relaxed custom-scrollbar">
+                          <div className="text-[10px] font-bold tracking-[0.2em] uppercase text-blue-400/70 mb-3 flex items-center gap-2">
+                            <ShieldCheck size={11} className="text-blue-400/70" /> AI 个性化评估
+                          </div>
+                          <div className="font-mono text-xs text-blue-300/80 leading-relaxed">{traceResults.aiRiskReport}</div>
                         </div>
                       )}
                     </div>
