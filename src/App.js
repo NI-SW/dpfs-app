@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, Trash2, LogOut, ShieldCheck, Activity, Cpu,
   CheckCircle, Box, ListChecks, ArrowRight,
   User, Lock, LayoutDashboard, Zap, Search, ChevronRight,
-  RefreshCw, ChevronLeft, Check, Pencil, Save, Hash
+  RefreshCw, ChevronLeft, Check, Pencil, Save, Hash, Upload,
+  Play, Film, File, Download, X, Eye, UserPlus, ChevronDown
 } from 'lucide-react';
 import ParticleBackground from './ParticleBackground';
 
@@ -102,6 +103,9 @@ export default function App() {
   const [currentRiskProPage, setCurrentRiskProPage] = useState(0);
   const [riskProOpen, setRiskProOpen] = useState({});
   const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+  const [showRegister, setShowRegister] = useState(false);
+  const [registerForm, setRegisterForm] = useState({ username: '', password: '', confirmPassword: '', role: 'consumer' });
+  const [registerLoading, setRegisterLoading] = useState(false);
   const [userInfo, setUserInfo] = useState(null);
   const [pwdForm, setPwdForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
   const [pwdLoading, setPwdLoading] = useState(false);
@@ -112,6 +116,10 @@ export default function App() {
   // --- 删除产品确认弹窗 ---
   const [dropModal, setDropModal] = useState({ open: false, item: null });
   const [dropLoading, setDropLoading] = useState(false);
+
+  // --- 文件列表弹窗 ---
+  const [fileModal, setFileModal] = useState({ open: false, item: null, files: [], loading: false });
+  const [viewingFile, setViewingFile] = useState(null); // { name, path }
 
   useEffect(() => {
     const savedToken = localStorage.getItem('dpfs_token');
@@ -252,6 +260,78 @@ export default function App() {
       showToast(`录入失败: ${error.message}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // 文件上传状态
+  const fileInputRef = useRef(null);
+  const [uploadingRowId, setUploadingRowId] = useState(null);
+
+  const handleFileUpload = async (rowId) => {
+    // 触发隐藏的文件选择器，记住目标 rowId
+    if (fileInputRef.current) {
+      fileInputRef.current._targetRowId = rowId;
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileSelected = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) { showToast('请先登录'); return; }
+
+    if (!formData.modeName || !formData.productName) {
+      showToast('请先填写模式和产品名称');
+      return;
+    }
+
+    const rowId = fileInputRef.current._targetRowId;
+    setUploadingRowId(rowId);
+
+    try {
+      // 读取文件为 base64
+      const base64Content = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          // reader.result 格式: "data:...;base64,XXXX"
+          const base64 = reader.result.split(',')[1];
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const uploadPayload = {
+        user_token: parseInt(token),
+        schema: formData.modeName,
+        product_name: formData.productName,
+        file_name: file.name,
+        file_content: base64Content
+      };
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(uploadPayload)
+      });
+      const result = await response.json();
+
+      if (result.code === 200) {
+        // 将文件路径回填到对应行的 value 字段
+        updateDynamicRow('baseInfo', rowId, 'value', result.file_path);
+        showToast('文件上传成功');
+      } else {
+        showToast('上传失败: ' + (result.message || '未知错误'));
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+      showToast('上传失败: ' + err.message);
+    } finally {
+      setUploadingRowId(null);
+      // 清空 file input 以允许重复选择同一文件
+      e.target.value = '';
     }
   };
 
@@ -422,9 +502,20 @@ export default function App() {
           {items.map((ing, idx) => {
             const name = ing['Ingredient Name'] || '未知';
             const pct = ing['Ingredient Percentage'] || '0';
-            const children = ing['IngredientInfo'];
-            const hasChildren = Array.isArray(children) && children.length > 0;
-            const isObj2 = isObj(children) && Object.keys(children).length > 0;
+            const rawChildren = ing['IngredientInfo'];
+            // IngredientInfo 可能是数组（子配料列表）或对象（含产品基本信息 + 嵌套 IngredientInfo 数组）
+            // 当为对象时，提取其中的 IngredientInfo 数组作为子配料，跳过基本信息字段
+            let children;
+            if (Array.isArray(rawChildren)) {
+              children = rawChildren;
+            } else if (isObj(rawChildren) && Object.keys(rawChildren).length > 0) {
+              children = rawChildren['IngredientInfo'] || [];
+              // 如果对象中没有嵌套 IngredientInfo，则 children 为空数组（叶节点含产品信息）
+              if (!Array.isArray(children)) children = [children];
+            } else {
+              children = [];
+            }
+            const hasChildren = children.length > 0;
             const key = `ing-${depth}-${idx}-${name}`;
 
             return (
@@ -435,13 +526,11 @@ export default function App() {
                   <span className="text-[10px] px-1.5 py-px rounded-md bg-emerald-500/8 text-emerald-400/70 font-mono font-semibold">
                     {pct}%
                   </span>
-                  {(hasChildren || isObj2) && (
+                  {hasChildren && (
                     <span className="text-[9px] text-emerald-600/30 opacity-0 group-hover:opacity-100 transition-opacity">▸ 递归溯源</span>
                   )}
                 </div>
-                {(hasChildren || isObj2) && renderIngredientTree(
-                  hasChildren ? children : [children], depth + 1
-                )}
+                {hasChildren && renderIngredientTree(children, depth + 1)}
               </div>
             );
           })}
@@ -679,6 +768,12 @@ export default function App() {
           setCurrentSystemPage(beginIndex);
           setSystemProBasicOpen({});
         }
+      } else if (checkResult.code === 0 || checkResult.code === -34 || Number(checkResult.code) === 0 || Number(checkResult.code) === -34) {
+        // 空结果：dpfs返回0(ENOENT)或-34(超出范围)均视为无数据，清空列表
+        setSystemTotal(0);
+        setSystemData([]);
+        setCurrentSystemPage(0);
+        setSystemProBasicOpen({});
       }
     } catch (error) {
       console.error(error);
@@ -724,6 +819,49 @@ export default function App() {
     const role = localStorage.getItem('dpfs_role') || '';
     const perms = ROLE_PERMISSIONS[role] || [];
     return perms.includes('*') || perms.includes('product:drop');
+  };
+
+  // 获取产品已上传的文件列表
+  const handleFetchFiles = async (item) => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) { showToast('请先登录'); return; }
+
+    setFileModal({ open: true, item, files: [], loading: true });
+    setViewingFile(null);
+
+    try {
+      const response = await fetch('/api/list_files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_token: parseInt(token),
+          schema: item.group_name,
+          product_name: item.product_name
+        })
+      });
+      const result = await response.json();
+      if (result.code === 200) {
+        setFileModal(prev => ({ ...prev, files: result.files || [], loading: false }));
+      } else {
+        setFileModal(prev => ({ ...prev, files: [], loading: false }));
+        showToast(result.message || '获取文件列表失败');
+      }
+    } catch (err) {
+      setFileModal(prev => ({ ...prev, files: [], loading: false }));
+      showToast('获取文件列表失败');
+    }
+  };
+
+  // 判断文件是否为视频
+  const isVideoFile = (filename) => {
+    const ext = (filename || '').toLowerCase().split('.').pop();
+    return ['mp4', 'webm', 'avi', 'mov', 'mkv', 'ogg'].includes(ext);
+  };
+
+  // 判断文件是否为图片
+  const isImageFile = (filename) => {
+    const ext = (filename || '').toLowerCase().split('.').pop();
+    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp'].includes(ext);
   };
 
   // 进入数据查询页时自动加载第一页
@@ -838,12 +976,18 @@ export default function App() {
         });
         setSystemProBasicCache((prev) => ({ ...prev, [key]: extra }));
       } else {
-        alert(result?.message || "请求失败");
+        // 产品可能已被删除（Table does not exist），从列表中移除并刷新
         setSystemProBasicOpen((prev) => ({ ...prev, [key]: false }));
+        if (result?.code === -2 || (result?.message && result.message.includes('does not exist'))) {
+          showToast('该产品数据已不存在，列表已刷新');
+          handleFetchSystemData(currentSystemPage);
+        } else {
+          showToast(result?.message || "请求失败");
+        }
       }
     } catch (e) {
-      alert(e?.message || "请求失败");
       setSystemProBasicOpen((prev) => ({ ...prev, [key]: false }));
+      showToast(e?.message || "请求失败");
     } finally {
       setSystemProBasicLoading((prev) => ({ ...prev, [key]: false }));
     }
@@ -870,6 +1014,37 @@ export default function App() {
       alert("连接失败");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!registerForm.username || !registerForm.password) return alert("请完整输入用户名和密码");
+    if (registerForm.password.length < 6) return alert("密码长度不能少于6位");
+    if (registerForm.password !== registerForm.confirmPassword) return alert("两次输入的密码不一致");
+    setRegisterLoading(true);
+    try {
+      const response = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: registerForm.username,
+          password: registerForm.password,
+          role: registerForm.role
+        })
+      });
+      const result = await response.json();
+      if (result.code === 200) {
+        alert("注册成功！请使用新账号登录。");
+        setShowRegister(false);
+        setLoginForm({ username: registerForm.username, password: '' });
+        setRegisterForm({ username: '', password: '', confirmPassword: '', role: 'consumer' });
+      } else {
+        alert(result.message || "注册失败");
+      }
+    } catch (error) {
+      alert("连接失败");
+    } finally {
+      setRegisterLoading(false);
     }
   };
 
@@ -990,24 +1165,71 @@ export default function App() {
               </p>
             </div>
             <div className="lg:col-span-2 space-y-10 animate-in fade-in slide-in-from-right-6 duration-1000 delay-300">
-              <div>
-                <h3 className="text-3xl font-extrabold tracking-tight mb-2">欢迎回来</h3>
-                <p className="text-slate-500">请使用您的账号进行身份验证。</p>
-              </div>
-              <div className="space-y-6">
-                <div className="relative group">
-                  <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
-                  <input type="text" value={loginForm.username} onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })} placeholder="输入管理账号" className="w-full pl-14 pr-6 py-5 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg" />
-                </div>
-                <div className="relative group">
-                  <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
-                  <input type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} placeholder="输入访问密钥 (密码)" className="w-full pl-14 pr-6 py-5 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white" />
-                </div>
-                <button onClick={handleLogin} className="group w-full py-5 bg-emerald-600 text-white rounded-2xl font-black text-lg hover:bg-emerald-500 transition-all transform hover:-translate-y-1 shadow-2xl shadow-emerald-950 flex items-center justify-center gap-3">
-                  {isLoading ? "系统验证中..." : "验证身份进入系统"}
-                  <ArrowRight size={22} className="group-hover:translate-x-1 transition-transform" />
-                </button>
-              </div>
+              {!showRegister ? (
+                <>
+                  <div>
+                    <h3 className="text-3xl font-extrabold tracking-tight mb-2">欢迎回来</h3>
+                    <p className="text-slate-500">请使用您的账号进行身份验证。</p>
+                  </div>
+                  <div className="space-y-6">
+                    <div className="relative group">
+                      <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
+                      <input type="text" value={loginForm.username} onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })} placeholder="输入管理账号" className="w-full pl-14 pr-6 py-5 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg" />
+                    </div>
+                    <div className="relative group">
+                      <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
+                      <input type="password" value={loginForm.password} onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })} placeholder="输入访问密钥 (密码)" className="w-full pl-14 pr-6 py-5 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white" onKeyDown={(e) => e.key === 'Enter' && handleLogin()} />
+                    </div>
+                    <button onClick={handleLogin} className="group w-full py-5 bg-emerald-600 text-white rounded-2xl font-black text-lg hover:bg-emerald-500 transition-all transform hover:-translate-y-1 shadow-2xl shadow-emerald-950 flex items-center justify-center gap-3">
+                      {isLoading ? "系统验证中..." : "验证身份进入系统"}
+                      <ArrowRight size={22} className="group-hover:translate-x-1 transition-transform" />
+                    </button>
+                    <div className="text-center">
+                      <button onClick={() => { setShowRegister(true); setRegisterForm({ username: '', password: '', confirmPassword: '', role: 'consumer' }); }} className="text-slate-400 hover:text-emerald-400 transition-colors text-sm font-medium">
+                        没有账号？<span className="text-emerald-500 font-semibold">注册新账号</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <h3 className="text-3xl font-extrabold tracking-tight mb-2">创建账号</h3>
+                    <p className="text-slate-500">注册一个新的系统账号。</p>
+                  </div>
+                  <div className="space-y-5">
+                    <div className="relative group">
+                      <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
+                      <input type="text" value={registerForm.username} onChange={(e) => setRegisterForm({ ...registerForm, username: e.target.value })} placeholder="设置用户名" className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg" />
+                    </div>
+                    <div className="relative group">
+                      <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
+                      <input type="password" value={registerForm.password} onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })} placeholder="设置密码（至少6位）" className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white" />
+                    </div>
+                    <div className="relative group">
+                      <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
+                      <input type="password" value={registerForm.confirmPassword} onChange={(e) => setRegisterForm({ ...registerForm, confirmPassword: e.target.value })} placeholder="确认密码" className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white" />
+                    </div>
+                    <div className="relative group">
+                      <ShieldCheck className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors z-10" size={20} />
+                      <select value={registerForm.role} onChange={(e) => setRegisterForm({ ...registerForm, role: e.target.value })} className="w-full pl-14 pr-10 py-4 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white appearance-none cursor-pointer">
+                        <option value="consumer">消费者 — 查看产品、溯源</option>
+                        <option value="manufacturer">生产商 — 创建产品、交易</option>
+                      </select>
+                      <ChevronDown className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-600 pointer-events-none" size={20} />
+                    </div>
+                    <button onClick={handleRegister} className="group w-full py-5 bg-emerald-600 text-white rounded-2xl font-black text-lg hover:bg-emerald-500 transition-all transform hover:-translate-y-1 shadow-2xl shadow-emerald-950 flex items-center justify-center gap-3">
+                      {registerLoading ? "注册中..." : "注册账号"}
+                      <UserPlus size={22} className="group-hover:scale-110 transition-transform" />
+                    </button>
+                    <div className="text-center">
+                      <button onClick={() => setShowRegister(false)} className="text-slate-400 hover:text-emerald-400 transition-colors text-sm font-medium">
+                        已有账号？<span className="text-emerald-500 font-semibold">返回登录</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </main>
@@ -1101,6 +1323,13 @@ export default function App() {
 
             {activeTab === 'dashboard' && (
               <>
+                {/* 隐藏的文件选择器 */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileSelected}
+                  style={{ display: 'none' }}
+                />
                 <header className="mb-12">
                   <span className="text-[10px] font-black tracking-[0.3em] text-emerald-600 uppercase mb-3 block">Security Collection</span>
                   <h2 className="text-4xl font-black text-slate-900 tracking-tight">智能风险评估录入</h2>
@@ -1143,7 +1372,15 @@ export default function App() {
                     {formData.baseInfo.map(row => (
                       <div key={row.id} className="flex gap-4 mb-4 group animate-in slide-in-from-top-2">
                         <input onChange={(e) => updateDynamicRow('baseInfo', row.id, 'key', e.target.value)} className="flex-1 px-6 py-4 rounded-2xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all font-medium" placeholder="数据标签" />
-                        <input onChange={(e) => updateDynamicRow('baseInfo', row.id, 'value', e.target.value)} className="flex-1 px-6 py-4 rounded-2xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all font-medium" placeholder="内容" />
+                        <input value={row.value || ''} onChange={(e) => updateDynamicRow('baseInfo', row.id, 'value', e.target.value)} className="flex-1 px-6 py-4 rounded-2xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all font-medium" placeholder="内容" />
+                        <button
+                          onClick={() => handleFileUpload(row.id)}
+                          disabled={uploadingRowId === row.id}
+                          title="上传文件（视频等）"
+                          className="p-3 text-slate-300 hover:text-emerald-500 transition-colors disabled:opacity-50"
+                        >
+                          {uploadingRowId === row.id ? <RefreshCw size={20} className="animate-spin" /> : <Upload size={20} />}
+                        </button>
                         <button onClick={() => removeRow('baseInfo', row.id)} className="p-3 text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={22} /></button>
                       </div>
                     ))}
@@ -1448,6 +1685,13 @@ export default function App() {
                                 {item.trace_code_prefix}
                               </div>
                             </div>
+                            <button
+                              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-emerald-500 hover:bg-emerald-50 transition-all"
+                              title="查看已上传文件"
+                              onClick={(e) => { e.stopPropagation(); handleFetchFiles(item); }}
+                            >
+                              <Eye size={16} />
+                            </button>
                             {hasDropPermission() && (
                               <button
                                 className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-all"
@@ -1937,6 +2181,138 @@ export default function App() {
               >
                 {dropLoading ? <><RefreshCw size={16} className="animate-spin" /> 删除中...</> : '确认删除'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 文件列表弹窗 */}
+      {fileModal.open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-300 p-4">
+          <div className="bg-white rounded-[2rem] p-8 max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-slate-100 transform animate-in zoom-in-95">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600">
+                  <Film size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800">文件资源</h3>
+                  <p className="text-xs text-slate-400">
+                    {fileModal.item?.product_name} · {fileModal.item?.group_name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setFileModal({ open: false, item: null, files: [], loading: false }); setViewingFile(null); }}
+                className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-all"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Video/Image viewer */}
+            {viewingFile && (
+              <div className="mb-4 border border-slate-100 rounded-2xl overflow-hidden bg-slate-950">
+                {isVideoFile(viewingFile.name) ? (
+                  <video
+                    controls
+                    autoPlay
+                    className="w-full max-h-80"
+                    src={`/api/serve_file?path=${encodeURIComponent(viewingFile.path)}`}
+                  >
+                    您的浏览器不支持视频播放
+                  </video>
+                ) : isImageFile(viewingFile.name) ? (
+                  <img
+                    src={`/api/serve_file?path=${encodeURIComponent(viewingFile.path)}`}
+                    alt={viewingFile.name}
+                    className="w-full max-h-80 object-contain"
+                  />
+                ) : null}
+                <div className="px-4 py-2 bg-slate-900 text-white text-xs flex items-center justify-between">
+                  <span className="truncate mr-2">{viewingFile.name}</span>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const url = `/api/serve_file?path=${encodeURIComponent(viewingFile.path)}`;
+                        const response = await fetch(url);
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        const blob = await response.blob();
+                        const blobUrl = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = blobUrl;
+                        link.download = viewingFile.name;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(blobUrl);
+                        showToast('下载成功');
+                      } catch (err) {
+                        console.error('Download error:', err);
+                        showToast('下载失败: ' + err.message);
+                      }
+                    }}
+                    className="shrink-0 px-3 py-1 bg-white/20 rounded-lg text-white hover:bg-white/30 transition-all flex items-center gap-1 text-[10px] font-bold"
+                  >
+                    <Download size={12} /> 下载
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* File list */}
+            <div className="flex-1 overflow-y-auto -mx-2 px-2">
+              {fileModal.loading ? (
+                <div className="flex items-center justify-center py-16 text-slate-400">
+                  <RefreshCw size={24} className="animate-spin mr-2" />
+                  加载文件列表...
+                </div>
+              ) : fileModal.files.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                  <File size={40} className="mb-3 text-slate-200" />
+                  <div className="font-semibold">暂无文件</div>
+                  <div className="text-xs mt-1">该商品尚未上传任何文件</div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {fileModal.files.map((f, i) => (
+                    <div
+                      key={i}
+                      className={`flex items-center gap-3 px-4 py-3 rounded-xl cursor-pointer transition-all border ${
+                        viewingFile?.path === f.path
+                          ? 'bg-emerald-50 border-emerald-200 shadow-sm'
+                          : 'bg-slate-50 border-transparent hover:bg-slate-100 hover:border-slate-200'
+                      }`}
+                      onClick={() => setViewingFile({ name: f.name, path: f.path })}
+                    >
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
+                        isVideoFile(f.name) ? 'bg-purple-100 text-purple-600' :
+                        isImageFile(f.name) ? 'bg-blue-100 text-blue-600' :
+                        'bg-slate-200 text-slate-500'
+                      }`}>
+                        {isVideoFile(f.name) ? <Play size={16} /> :
+                         isImageFile(f.name) ? <Eye size={16} /> :
+                         <File size={16} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm text-slate-700 truncate">{f.name}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {f.size > 1024*1024 ? `${(f.size/1024/1024).toFixed(1)} MB` :
+                           f.size > 1024 ? `${(f.size/1024).toFixed(1)} KB` : `${f.size} B`}
+                          {isVideoFile(f.name) && ' · 视频'}
+                          {isImageFile(f.name) && ' · 图片'}
+                        </div>
+                      </div>
+                      {isVideoFile(f.name) || isImageFile(f.name) ? (
+                        <Play size={14} className="text-slate-300 shrink-0" />
+                      ) : (
+                        <Download size={14} className="text-slate-300 shrink-0" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
