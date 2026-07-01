@@ -3,11 +3,12 @@ import {
   Plus, Trash2, LogOut, ShieldCheck, Activity, Cpu,
   CheckCircle, Box, ListChecks, ArrowRight,
   User, Lock, LayoutDashboard, Zap, Search, ChevronRight,
-  RefreshCw, ChevronLeft, Check, Pencil, Save, Hash, Upload,
+  RefreshCw, ChevronLeft, Check, Pencil, Save, Hash, Upload, FileText,
   Play, Film, File, Download, X, Eye, UserPlus, ChevronDown,
   Monitor, HardDrive, MemoryStick, Clock, AlertTriangle
 } from 'lucide-react';
 import ParticleBackground from './ParticleBackground';
+import ChatPanel from './ChatPanel';
 
 // --- 子组件：退出确认弹窗 ---
 const LogoutModal = ({ isOpen, onClose, onConfirm }) => {
@@ -39,14 +40,17 @@ const TraceLineChart = ({ data }) => {
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
+    const parent = canvas.parentElement;
+    const rect = parent.getBoundingClientRect();
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
     ctx.scale(dpr, dpr);
 
     const W = rect.width;
     const H = rect.height;
-    const pad = { top: 20, right: 20, bottom: 35, left: 45 };
+    const pad = { top: 16, right: 16, bottom: 24, left: 40 };
     const chartW = W - pad.left - pad.right;
     const chartH = H - pad.top - pad.bottom;
 
@@ -257,6 +261,8 @@ export default function App() {
   const traceHistoryRef = useRef([]); // ref for timer closure
   const [tradeHistory, setTradeHistory] = useState([]); // [{time, count}]
   const tradeHistoryRef = useRef([]);
+  const [logData, setLogData] = useState([]); // [{time, level, msg}]
+  const logHistoryRef = useRef([]);
 
   // --- 删除产品确认弹窗 ---
   const [dropModal, setDropModal] = useState({ open: false, item: null });
@@ -521,10 +527,31 @@ export default function App() {
   useEffect(() => {
     if (!isLoggedIn || activeTab !== 'monitor') return;
     fetchMonitorData();
+    fetchLogsData();
     if (!monitorAutoRefresh) return;
-    const interval = setInterval(fetchMonitorData, 5000);
+    const interval = setInterval(() => { fetchMonitorData(); fetchLogsData(); }, 5000);
     return () => clearInterval(interval);
   }, [isLoggedIn, activeTab, monitorAutoRefresh]);
+
+  // --- 日志数据获取 ---
+  const fetchLogsData = async () => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: parseInt(token), lines: 50 })
+      });
+      const result = await response.json();
+      if (result.code === 200 && result.logs) {
+        logHistoryRef.current = result.logs;
+        setLogData([...logHistoryRef.current]);
+      }
+    } catch (err) {
+      // silent
+    }
+  };
 
   const normalizeApiText = (value, emptyText) => {
     const fallback = emptyText || "无";
@@ -541,16 +568,25 @@ export default function App() {
     const levelMap = {
       l: '低风险',
       m: '中风险',
-      h: '高风险'
+      h: '高风险',
+      low: '低风险',
+      medium: '中风险',
+      high: '高风险'
     };
     const labelMap = {
       risk: '安全风险',
       health: '健康风险',
       comp_ana: '成分分析',
       pot_risk: '潜在风险',
-      suggest: '建议'
+      suggest: '建议',
+      risk_level: '综合风险等级',
+      patient_risk: '患者特异性风险',
+      ingredient_analysis: '原料风险分析',
+      interaction_warning: '药物-食物相互作用',
+      recommendation: '食用建议',
+      general_risk: '一般性风险'
     };
-    const order = ['risk', 'health', 'comp_ana', 'pot_risk', 'suggest'];
+    const order = ['risk_level', 'risk', 'health', 'patient_risk', 'ingredient_analysis', 'interaction_warning', 'comp_ana', 'pot_risk', 'recommendation', 'suggest', 'general_risk'];
 
     const indentBlock = (text, prefix) => {
       const p = prefix || '  ';
@@ -591,7 +627,7 @@ export default function App() {
     };
     const emitKeyValue = (k, v) => {
       const label = labelMap[k] || k;
-      if (k === 'risk' || k === 'health') {
+      if (k === 'risk' || k === 'health' || k === 'risk_level') {
         const level = String(v ?? '').trim().toLowerCase();
         const text = levelMap[level] || String(v ?? '').trim();
         pushSection([`${label}: ${text || '无'}`]);
@@ -1505,8 +1541,8 @@ export default function App() {
       </aside>
 
       <main className="flex-1 flex overflow-hidden">
-        <div className={`h-full overflow-y-auto p-12 custom-scrollbar transition-all duration-500 ${(activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'monitor' || activeTab === 'profile') ? 'flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'flex-[0.9]' : 'flex-[1.3]')}`}>
-          <div className={`${(activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'monitor' || activeTab === 'profile') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
+        <div className={`h-full overflow-y-auto custom-scrollbar transition-all duration-500 ${(activeTab === 'monitor') ? 'p-4 flex-1' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile') ? 'p-12 flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'p-12 flex-[0.9]' : 'p-12 flex-[1.3]')}`}>
+          <div className={`${(activeTab === 'monitor') ? 'max-w-full' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
 
             {activeTab === 'dashboard' && (
               <>
@@ -1627,7 +1663,7 @@ export default function App() {
                       {[
                         { key: 'traceDetail', title: '详细交易信息', desc: '包含交易流转记录', icon: Activity },
                         { key: 'ingreDetail', title: '详细配料信息', desc: '配料溯源树与占比', icon: ListChecks },
-                        { key: 'aiRisk', title: 'AI个性化评估', desc: '智能分析报告', icon: ShieldCheck }
+                        { key: 'aiRisk', title: 'AI食品风险评估', desc: '基于患者信息的个性化分析', icon: ShieldCheck }
                       ].map((opt) => {
                         const Icon = opt.icon;
                         const active = traceForm[opt.key];
@@ -1993,124 +2029,143 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* ── Middle: Chart + Chart + Resources ── */}
-                <div className="grid grid-cols-3 flex-1 min-h-0" style={{gap:'10px'}}>
-                  {/* 左侧：溯源查询折线图 */}
-                  <div className="rounded-xl p-4 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
-                    <div className="flex items-center justify-between mb-3 shrink-0">
-                      <div className="flex items-center gap-2">
-                        <Activity size={14} className="text-emerald-500" />
-                        <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">溯源查询趋势</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
-                        <span className="text-[10px] text-rose-500 font-bold">LIVE 5s</span>
-                        <span className="text-[10px] text-slate-300 font-mono ml-2">{traceHistory.length} pts</span>
-                      </div>
-                    </div>
-                    <div className="flex-1 min-h-0">
-                      <TraceLineChart data={traceHistory} />
-                    </div>
-                  </div>
-
-                  {/* 中间：交易统计折线图 */}
-                  <div className="rounded-xl p-4 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
-                    <div className="flex items-center justify-between mb-3 shrink-0">
-                      <div className="flex items-center gap-2">
-                        <Plus size={14} className="text-blue-500" />
-                        <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">交易统计趋势</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
-                        <span className="text-[10px] text-rose-500 font-bold">LIVE 5s</span>
-                        <span className="text-[10px] text-slate-300 font-mono ml-2">{tradeHistory.length} pts</span>
-                      </div>
-                    </div>
-                    <div className="flex-1 min-h-0">
-                      <TraceLineChart data={tradeHistory} />
-                    </div>
-                  </div>
-
-                  {/* 右侧：系统负载 */}
-                  <div className="rounded-xl p-4 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
-                    <div className="flex items-center gap-2 mb-4 shrink-0">
-                      <Cpu size={14} className="text-blue-500" />
-                      <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">系统资源</span>
-                    </div>
-                    <div className="flex-1 flex flex-col justify-center gap-5">
-                      {[
-                        { label: 'CPU', val: monitorData?.cpu_usage ?? 0, color: ['#06b6d4','#3b82f6'], icon: <Cpu size={13} className="text-cyan-500" /> },
-                        { label: 'MEM', val: monitorData?.mem_usage_percent ?? 0, color: ['#8b5cf6','#6366f1'], icon: <MemoryStick size={13} className="text-violet-500" />, detail: monitorData ? `${((monitorData.mem_total_kb - monitorData.mem_available_kb)/1024/1024).toFixed(1)} / ${(monitorData.mem_total_kb/1024/1024).toFixed(1)} GB` : '' },
-                        { label: 'DISK', val: monitorData?.disk_usage_percent ?? 0, color: ['#10b981','#14b8a6'], icon: <HardDrive size={13} className="text-emerald-500" />, detail: monitorData ? `${(monitorData.disk_used_kb/1024/1024).toFixed(1)} / ${(monitorData.disk_total_kb/1024/1024).toFixed(1)} GB` : '' },
-                      ].map((g, i) => {
-                        const pct = Math.min(g.val, 100);
-                        const isWarn = pct > 80;
-                        return (
-                          <div key={i}>
-                            <div className="flex items-center justify-between mb-1.5">
-                              <div className="flex items-center gap-2">{g.icon}<span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider w-10">{g.label}</span></div>
-                              <span className="text-sm font-black" style={{color: isWarn ? '#ef4444' : g.color[0],fontFamily:'Orbitron,sans-serif'}}>{g.val.toFixed(1)}%</span>
-                            </div>
-                            <div className="w-full h-5 rounded-md overflow-hidden" style={{background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.08)'}}>
-                              <div className="h-full rounded-md transition-all duration-700 relative" style={{width:`${pct}%`,background: isWarn ? 'rgba(239,68,68,.7)' : `linear-gradient(90deg,${g.color[0]},${g.color[1]})`}}>
-                                <div className="absolute inset-0" style={{background:'repeating-linear-gradient(-45deg,transparent,transparent 4px,rgba(255,255,255,.04) 4px,rgba(255,255,255,.04) 8px)'}}></div>
-                              </div>
-                            </div>
-                            {g.detail && <div className="text-[9px] text-slate-300 font-mono mt-1">{g.detail}</div>}
+                {/* ── Middle: Charts (2/3) + Resources & Stats (1/3) ── */}
+                <div style={{display:'flex', gap:'10px'}} className="flex-1 min-h-0">
+                  {/* Left: 两张图表并排，占 2/3 */}
+                  <div style={{flex:'2', display:'flex', flexDirection:'column', gap:'10px', minHeight:0}}>
+                    <div className="grid grid-cols-2 flex-1 min-h-0" style={{gap:'10px'}}>
+                      {/* 溯源查询折线图 */}
+                      <div className="rounded-xl p-3 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
+                        <div className="flex items-center justify-between mb-2 shrink-0">
+                          <div className="flex items-center gap-2">
+                            <Activity size={14} className="text-emerald-500" />
+                            <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">溯源查询趋势</span>
                           </div>
-                        );
-                      })}
+                          <div className="flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                            <span className="text-[10px] text-rose-500 font-bold">LIVE 5s</span>
+                            <span className="text-[10px] text-slate-300 font-mono ml-2">{traceHistory.length} pts</span>
+                          </div>
+                        </div>
+                        <div className="flex-1 min-h-0 relative">
+                          <TraceLineChart data={traceHistory} />
+                        </div>
+                      </div>
+
+                      {/* 交易统计折线图 */}
+                      <div className="rounded-xl p-3 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
+                        <div className="flex items-center justify-between mb-2 shrink-0">
+                          <div className="flex items-center gap-2">
+                            <Plus size={14} className="text-blue-500" />
+                            <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">交易统计趋势</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                            <span className="text-[10px] text-rose-500 font-bold">LIVE 5s</span>
+                            <span className="text-[10px] text-slate-300 font-mono ml-2">{tradeHistory.length} pts</span>
+                          </div>
+                        </div>
+                        <div className="flex-1 min-h-0 relative">
+                          <TraceLineChart data={tradeHistory} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: 系统资源 + 响应时间 + 在线用户，窄栏 */}
+                  <div style={{flex:'0.85', display:'flex', flexDirection:'column', gap:'8px', minHeight:0}}>
+                    {/* 系统资源 */}
+                    <div className="rounded-xl p-4 flex-1 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
+                      <div className="flex items-center gap-2 mb-3 shrink-0">
+                        <Cpu size={14} className="text-blue-500" />
+                        <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">系统资源</span>
+                      </div>
+                      <div className="flex-1 flex flex-col justify-center gap-4">
+                        {[
+                          { label: 'CPU', val: monitorData?.cpu_usage ?? 0, color: ['#06b6d4','#3b82f6'], icon: <Cpu size={13} className="text-cyan-500" /> },
+                          { label: 'MEM', val: monitorData?.mem_usage_percent ?? 0, color: ['#8b5cf6','#6366f1'], icon: <MemoryStick size={13} className="text-violet-500" />, detail: monitorData ? `${((monitorData.mem_total_kb - monitorData.mem_available_kb)/1024/1024).toFixed(1)} / ${(monitorData.mem_total_kb/1024/1024).toFixed(1)} GB` : '' },
+                          { label: 'DISK', val: monitorData?.disk_usage_percent ?? 0, color: ['#10b981','#14b8a6'], icon: <HardDrive size={13} className="text-emerald-500" />, detail: monitorData ? `${(monitorData.disk_used_kb/1024/1024).toFixed(1)} / ${(monitorData.disk_total_kb/1024/1024).toFixed(1)} GB` : '' },
+                        ].map((g, i) => {
+                          const pct = Math.min(g.val, 100);
+                          const isWarn = pct > 80;
+                          return (
+                            <div key={i}>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <div className="flex items-center gap-2">{g.icon}<span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider w-10">{g.label}</span></div>
+                                <span className="text-sm font-black" style={{color: isWarn ? '#ef4444' : g.color[0],fontFamily:'Orbitron,sans-serif'}}>{g.val.toFixed(1)}%</span>
+                              </div>
+                              <div className="w-full h-5 rounded-md overflow-hidden" style={{background:'rgba(16,185,129,.06)',border:'1px solid rgba(16,185,129,.08)'}}>
+                                <div className="h-full rounded-md transition-all duration-700 relative" style={{width:`${pct}%`,background: isWarn ? 'rgba(239,68,68,.7)' : `linear-gradient(90deg,${g.color[0]},${g.color[1]})`}}>
+                                  <div className="absolute inset-0" style={{background:'repeating-linear-gradient(-45deg,transparent,transparent 4px,rgba(255,255,255,.04) 4px,rgba(255,255,255,.04) 8px)'}}></div>
+                                </div>
+                              </div>
+                              {g.detail && <div className="text-[9px] text-slate-300 font-mono mt-1">{g.detail}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* 响应时间 */}
+                    <div className="rounded-xl px-3 py-2.5 shrink-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Clock size={12} className="text-violet-500" />
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">响应时间</span>
+                        </div>
+                        <span className="text-lg font-black text-slate-800" style={{fontFamily:'Orbitron,sans-serif'}}>{monitorData?.response_time_ms?.toFixed(1) ?? '-'}<span className="text-[10px] text-slate-400 font-mono ml-0.5">ms</span></span>
+                      </div>
+                      <div className="w-full h-1.5 rounded-full overflow-hidden" style={{background:'rgba(16,185,129,.06)'}}>
+                        <div className={`h-full rounded-full transition-all duration-500 ${(monitorData?.response_time_ms ?? 0) < 100 ? 'bg-emerald-500' : (monitorData?.response_time_ms ?? 0) < 500 ? 'bg-amber-400' : 'bg-red-500'}`} style={{width:`${Math.min((monitorData?.response_time_ms ?? 0) / 10, 100)}%`}}></div>
+                      </div>
+                    </div>
+
+                    {/* 在线用户 */}
+                    <div className="rounded-xl px-3 py-2.5 shrink-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <User size={12} className="text-cyan-500" />
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">在线用户</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" style={{boxShadow:'0 0 6px rgba(16,185,129,.5)'}}></span>
+                          <span className="text-lg font-black text-slate-800" style={{fontFamily:'Orbitron,sans-serif'}}>{monitorData?.active_users ?? '-'}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">sessions</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                {/* ── Bottom: Response Time + Online Users ── */}
-                <div className="grid grid-cols-3" style={{gap:'10px'}}>
-                  {/* 响应时间 */}
-                  <div className="rounded-xl p-4" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <Clock size={13} className="text-violet-500" />
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">响应时间</span>
+                {/* ── Bottom: 系统日志 (全宽) ── */}
+                <div className="rounded-xl p-4 flex flex-col min-h-0" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)', flex:'0 0 220px'}}>
+                    <div className="flex items-center gap-2 mb-2 shrink-0">
+                      <FileText size={13} className="text-violet-500" />
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">系统日志</span>
+                      <span className="ml-auto text-[9px] text-slate-300 font-mono">{logData.length} entries</span>
                     </div>
-                    <div className="flex items-end gap-1.5">
-                      <span className="text-2xl font-black text-slate-800" style={{fontFamily:'Orbitron,sans-serif'}}>{monitorData?.response_time_ms?.toFixed(1) ?? '-'}</span>
-                      <span className="text-xs text-slate-400 mb-0.5 font-mono">ms</span>
-                    </div>
-                    <div className="w-full h-2 rounded-full mt-2.5 overflow-hidden" style={{background:'rgba(16,185,129,.06)'}}>
-                      <div className={`h-full rounded-full transition-all duration-500 ${(monitorData?.response_time_ms ?? 0) < 100 ? 'bg-emerald-500' : (monitorData?.response_time_ms ?? 0) < 500 ? 'bg-amber-400' : 'bg-red-500'}`} style={{width:`${Math.min((monitorData?.response_time_ms ?? 0) / 10, 100)}%`}}></div>
-                    </div>
-                    <div className="flex justify-between mt-1 text-[8px] text-slate-300 font-mono"><span>FAST</span><span>100ms</span><span>500ms</span><span>SLOW</span></div>
-                  </div>
-
-                  {/* 在线用户 */}
-                  <div className="rounded-xl p-4" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <User size={13} className="text-cyan-500" />
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">在线用户</span>
-                    </div>
-                    <div className="flex items-end gap-1.5">
-                      <span className="text-2xl font-black text-slate-800" style={{fontFamily:'Orbitron,sans-serif'}}>{monitorData?.active_users ?? '-'}</span>
-                      <span className="text-xs text-slate-400 mb-0.5 font-mono">sessions</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-2.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" style={{boxShadow:'0 0 6px rgba(16,185,129,.5)'}}></span>
-                      <span className="text-[10px] text-emerald-600 font-bold">ACTIVE</span>
+                    <div className="flex-1 overflow-y-auto scrollbar-thin" style={{maxHeight:'280px'}}>
+                      {logData.length === 0 ? (
+                        <div className="text-[10px] text-slate-300 font-mono text-center py-4">No log entries</div>
+                      ) : (
+                        <div className="flex flex-col gap-1">
+                          {logData.slice().reverse().map((entry, i) => {
+                            const isError = entry.level === 'ERROR' || entry.level === 'FATAL';
+                            const isWarn = entry.level === 'NOTIC';
+                            const accentColor = isError ? '#ef4444' : isWarn ? '#f59e0b' : '#64748b';
+                            const bgColor = isError ? 'rgba(239,68,68,.06)' : isWarn ? 'rgba(245,158,11,.05)' : 'transparent';
+                            return (
+                              <div key={i} className="flex items-start gap-2 px-2 py-1 rounded text-[10px] font-mono hover:bg-slate-50 transition-colors" style={{background: bgColor}}>
+                                <span className="text-slate-300 shrink-0 w-[85px] pt-[1px]">{entry.time?.slice(11,19) || ''}</span>
+                                <span className="shrink-0 mt-[1px] w-[44px] text-center font-bold rounded px-1" style={{color: accentColor, background: `${accentColor}15`, fontSize:'9px'}}>{entry.level}</span>
+                                <span className="text-slate-600 break-all leading-relaxed" style={{lineHeight:'1.4'}}>{entry.msg}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  {/* 系统状态 */}
-                  <div className="rounded-xl p-4" style={{background:'linear-gradient(135deg,rgba(255,255,255,.97),rgba(248,250,252,.95))',border:'1px solid rgba(16,185,129,.1)'}}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <ShieldCheck size={13} className="text-emerald-500" />
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">系统状态</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="w-3 h-3 rounded-full bg-emerald-500" style={{boxShadow:'0 0 10px rgba(16,185,129,.4)'}}></span>
-                      <span className="text-lg font-black text-emerald-600" style={{fontFamily:'Orbitron,sans-serif'}}>NOMINAL</span>
-                    </div>
-                    <div className="text-[10px] text-slate-300 font-mono mt-1.5">All systems operational</div>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -2679,6 +2734,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* AI 智能助手聊天面板 */}
+      {isLoggedIn && <ChatPanel />}
     </div>
   );
 }
