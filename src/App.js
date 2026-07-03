@@ -54,13 +54,12 @@ const TraceLineChart = ({ data }) => {
     const chartW = W - pad.left - pad.right;
     const chartH = H - pad.top - pad.bottom;
 
-    // 清空
     ctx.clearRect(0, 0, W, H);
 
-    // 计算数据范围
+    // Y 轴数据范围
     const values = data.map(d => d.count);
     let maxVal = Math.max(...values, 1);
-    maxVal = Math.ceil(maxVal * 1.2); // 上方留 20% 余量
+    maxVal = Math.ceil(maxVal * 1.2);
     if (maxVal < 5) maxVal = 5;
 
     // 背景网格
@@ -92,7 +91,16 @@ const TraceLineChart = ({ data }) => {
       return;
     }
 
-    // 计算点坐标
+    // ── 时间窗口：固定5分钟，用于 X 轴标签 ──
+    const WINDOW = 5 * 60 * 1000;
+    const lastTs = data[data.length - 1].ts;
+    const firstTs = data[0].ts;
+    const dataSpan = lastTs - firstTs;
+    const winStart = dataSpan >= WINDOW ? lastTs - WINDOW : firstTs;
+    const winEnd = lastTs;
+    const winDuration = Math.max(winEnd - winStart, 1000);
+
+    // 数据点均匀分布（索引定位），不依赖实际采集间隔
     const stepX = chartW / (data.length - 1);
     const points = data.map((d, i) => ({
       x: pad.left + i * stepX,
@@ -123,31 +131,52 @@ const TraceLineChart = ({ data }) => {
     ctx.lineJoin = 'round';
     ctx.stroke();
 
-    // 数据点圆点 (只画最近的几个)
-    const dotCount = Math.min(points.length, 10);
-    for (let i = points.length - dotCount; i < points.length; i++) {
+    // 数据点圆点 — 所有点统一可见，仅最后一个加高亮
+    for (let i = 0; i < points.length; i++) {
       const p = points[i];
+      const isLast = i === points.length - 1;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-      ctx.fillStyle = '#10b981';
+      ctx.arc(p.x, p.y, isLast ? 4 : 2, 0, Math.PI * 2);
+      ctx.fillStyle = isLast ? '#059669' : 'rgba(16,185,129,0.7)';
       ctx.fill();
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      if (isLast) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
 
-    // X 轴标签 (每隔几个显示)
+    // ── X 轴标签：均匀分布，显示实际时间 ──
     ctx.fillStyle = '#94a3b8';
     ctx.font = '9px sans-serif';
     ctx.textAlign = 'center';
-    const labelInterval = Math.max(1, Math.floor(data.length / 6));
+    const maxLabels = 6;
+    // 计算标签间隔：每隔 N 个数据点显示一个
+    const labelInterval = Math.max(Math.ceil(data.length / maxLabels), 1);
+    const minGap = 35;
+    let lastDrawnX = -Infinity;
     for (let i = 0; i < data.length; i += labelInterval) {
-      const shortTime = data[i].time.split(':').slice(1).join(':'); // MM:SS
-      ctx.fillText(shortTime, points[i].x, pad.top + chartH + 18);
+      const x = points[i].x;
+      if (x - lastDrawnX < minGap) continue;
+      const d = new Date(data[i].ts);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      const label = data.length > 30 ? `${hh}:${mm}` : `${hh}:${mm}:${ss}`;
+      ctx.fillText(label, x, pad.top + chartH + 18);
+      lastDrawnX = x;
     }
-    // 始终显示最后一个
-    const lastTime = data[data.length - 1].time.split(':').slice(1).join(':');
-    ctx.fillText(lastTime, points[points.length - 1].x, pad.top + chartH + 18);
+    // 始终显示最后一个标签
+    if (data.length > 1) {
+      const lastX = points[data.length - 1].x;
+      if (lastX - lastDrawnX >= minGap) {
+        const d = new Date(data[data.length - 1].ts);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        ctx.fillText(data.length > 30 ? `${hh}:${mm}` : `${hh}:${mm}:${ss}`, lastX, pad.top + chartH + 18);
+      }
+    }
 
     // 当前值标注
     const lastVal = data[data.length - 1].count;
@@ -505,15 +534,17 @@ export default function App() {
       const result = await response.json();
       if (result.code === 200) {
         setMonitorData(result);
-        // 记录溯源查询历史 (保留最近60个数据点，约5分钟)
+        // 记录溯源查询历史 (保留最近5分钟数据)
         const now = new Date();
         const timeLabel = now.toLocaleTimeString('zh-CN', { hour12: false });
-        const newEntry = { time: timeLabel, count: result.trace_count_per_min || 0 };
-        traceHistoryRef.current = [...traceHistoryRef.current.slice(-59), newEntry];
+        const ts = now.getTime();
+        const cutoff = ts - 5 * 60 * 1000; // 5分钟前
+        const newEntry = { time: timeLabel, ts, count: result.trace_count_per_min || 0 };
+        traceHistoryRef.current = [...traceHistoryRef.current.filter(d => d.ts > cutoff), newEntry];
         setTraceHistory([...traceHistoryRef.current]);
         // 记录交易统计历史
-        const tradeEntry = { time: timeLabel, count: result.trade_count_per_min || 0 };
-        tradeHistoryRef.current = [...tradeHistoryRef.current.slice(-59), tradeEntry];
+        const tradeEntry = { time: timeLabel, ts, count: result.trade_count_per_min || 0 };
+        tradeHistoryRef.current = [...tradeHistoryRef.current.filter(d => d.ts > cutoff), tradeEntry];
         setTradeHistory([...tradeHistoryRef.current]);
       }
     } catch (err) {
@@ -523,13 +554,22 @@ export default function App() {
     }
   };
 
-  // 监控页面自动刷新 (每5秒)
+  // 监控页面自动刷新 (每5秒) — 图表数据始终采集，日志仅在监控页显示
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    // 图表数据始终采集，避免切换tab时时间轴出现断档
+    fetchMonitorData();
+    if (!monitorAutoRefresh) return;
+    const interval = setInterval(() => { fetchMonitorData(); }, 5000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, monitorAutoRefresh]);
+
+  // 日志仅在监控页显示时获取
   useEffect(() => {
     if (!isLoggedIn || activeTab !== 'monitor') return;
-    fetchMonitorData();
     fetchLogsData();
     if (!monitorAutoRefresh) return;
-    const interval = setInterval(() => { fetchMonitorData(); fetchLogsData(); }, 5000);
+    const interval = setInterval(() => { fetchLogsData(); }, 5000);
     return () => clearInterval(interval);
   }, [isLoggedIn, activeTab, monitorAutoRefresh]);
 
@@ -695,6 +735,22 @@ export default function App() {
       if (k !== 'trade_info' && k !== 'ingredient_info') baseInfo[k] = v;
     });
 
+    // 判断是否为 epoch 时间（1969-12-31 或 1970-01-01 附近），显示为 null
+    const isEpochTime = (v) => {
+      if (typeof v !== 'string') return false;
+      return /^19(69|70)-12-3[01]|^1970-01-0[01]/.test(v.trim());
+    };
+
+    // 安全字符串化：对象/数组用JSON，其他用String()
+    const safeStringify = (v) => {
+      if (v === null || v === undefined) return '';
+      if (isEpochTime(v)) return 'null';
+      if (typeof v === 'object') {
+        try { return JSON.stringify(v, null, 0); } catch { return String(v); }
+      }
+      return String(v);
+    };
+
     // 友好化 key 名
     const friendlyKey = (k) => {
       const map = {
@@ -772,7 +828,7 @@ export default function App() {
               {Object.entries(baseInfo).map(([k, v]) => (
                 <div key={k} className="flex items-baseline gap-2 py-1.5 border-b border-white/[0.04]">
                   <span className="text-[10px] font-semibold text-slate-500 shrink-0">{friendlyKey(k)}</span>
-                  <span className={`text-xs font-semibold ${keyColor(k)} truncate`}>{String(v)}</span>
+                  <span className={`text-xs font-semibold ${keyColor(k)} truncate`}>{safeStringify(v)}</span>
                 </div>
               ))}
             </div>
@@ -793,7 +849,7 @@ export default function App() {
                     {Object.entries(trade).map(([k, v]) => (
                       <div key={k} className="flex items-baseline gap-1.5">
                         <span className="text-[9px] text-slate-500 shrink-0">{k}</span>
-                        <span className="text-[11px] text-emerald-400/80">{String(v)}</span>
+                        <span className="text-[11px] text-emerald-400/80">{safeStringify(v)}</span>
                       </div>
                     ))}
                   </div>
@@ -1471,11 +1527,22 @@ export default function App() {
       <LogoutModal
         isOpen={showLogoutModal}
         onClose={() => setShowLogoutModal(false)}
-        onConfirm={() => {
+        onConfirm={async () => {
+          const token = localStorage.getItem('dpfs_token');
+          if (token) {
+            try {
+              await fetch('/api/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_token: parseInt(token) })
+              });
+            } catch (e) { /* ignore logout API error */ }
+          }
           localStorage.removeItem('dpfs_token');
           localStorage.removeItem('dpfs_role');
           setIsLoggedIn(false);
           setShowLogoutModal(false);
+          setLoginForm({ username: '', password: '' });
         }}
       />
 
@@ -1653,7 +1720,7 @@ export default function App() {
                         value={traceForm.traceCode}
                         onChange={(e) => setTraceForm({ ...traceForm, traceCode: e.target.value })}
                         className="w-full pl-10 pr-6 py-4 rounded-xl bg-slate-50/80 border border-slate-200/60 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all font-mono font-semibold text-slate-700 placeholder:text-slate-300"
-                        placeholder="输入20位溯源码"
+                        placeholder="输入40位十六进制溯源码"
                       />
                       <Hash size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300" />
                     </div>
@@ -2044,7 +2111,7 @@ export default function App() {
                           <div className="flex items-center gap-2">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
                             <span className="text-[10px] text-rose-500 font-bold">LIVE 5s</span>
-                            <span className="text-[10px] text-slate-300 font-mono ml-2">{traceHistory.length} pts</span>
+                            <span className="text-[10px] text-slate-300 font-mono ml-2">5 min</span>
                           </div>
                         </div>
                         <div className="flex-1 min-h-0 relative">
@@ -2062,7 +2129,7 @@ export default function App() {
                           <div className="flex items-center gap-2">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
                             <span className="text-[10px] text-rose-500 font-bold">LIVE 5s</span>
-                            <span className="text-[10px] text-slate-300 font-mono ml-2">{tradeHistory.length} pts</span>
+                            <span className="text-[10px] text-slate-300 font-mono ml-2">5 min</span>
                           </div>
                         </div>
                         <div className="flex-1 min-h-0 relative">
