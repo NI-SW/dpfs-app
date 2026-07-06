@@ -5,7 +5,7 @@ import {
   User, Lock, LayoutDashboard, Zap, Search, ChevronRight,
   RefreshCw, ChevronLeft, Check, Pencil, Save, Hash, Upload, FileText,
   Play, Film, File, Download, X, Eye, UserPlus, ChevronDown,
-  Monitor, HardDrive, MemoryStick, Clock, AlertTriangle
+  Users, Monitor, HardDrive, MemoryStick, Clock, AlertTriangle
 } from 'lucide-react';
 import ParticleBackground from './ParticleBackground';
 import ChatPanel from './ChatPanel';
@@ -205,13 +205,14 @@ export default function App() {
     make_trade:  'trade:create',
     activity:    'product:list',
     risk_query:  'product:risk:view',
-    monitor:     null,
+    monitor:     'system:monitor:view',
+    users:       'system:user:manage',
     profile:     null,
   };
   // 角色权限表（与后端 role_permissions 表一致）
   const ROLE_PERMISSIONS = {
     admin:        ['*'],
-    supervisor:   ['product:list', 'product:drop', 'product:trace', 'product:risk:view', 'system:audit:view'],
+    supervisor:   ['product:list', 'product:drop', 'product:trace', 'product:risk:view', 'system:audit:view', 'system:monitor:view'],
     manufacturer: ['product:list', 'product:trace', 'product:risk:create', 'trade:create'],
     consumer:     ['product:trace'],
   };
@@ -310,7 +311,7 @@ export default function App() {
 
   // 获取用户首页（导航栏第一个有权限的页面）
   const getUserHomePage = () => {
-    return ['dashboard','trace','make_trade','activity','risk_query','monitor','profile']
+    return ['dashboard','trace','make_trade','activity','risk_query','monitor','users','profile']
       .find(key => hasPagePermission(key)) || 'profile';
   };
 
@@ -591,6 +592,130 @@ export default function App() {
     } catch (err) {
       // silent
     }
+  };
+
+  // ─── 用户管理状态 ───
+  const [usersList, setUsersList] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [showUserDialog, setShowUserDialog] = useState(false);
+  const [userDialogMode, setUserDialogMode] = useState('create'); // 'create' | 'edit' | 'resetPwd'
+  const [editingUserId, setEditingUserId] = useState(null);
+  const [userForm, setUserForm] = useState({
+    username: '', password: '', role: 'consumer', real_name: '', phone: '', mail: '', description: '', status: 'active'
+  });
+  const [userSearch, setUserSearch] = useState('');
+
+  const fetchUsersList = async () => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    setUsersLoading(true);
+    try {
+      const response = await fetch('/api/admin/users/list', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: parseInt(token) })
+      });
+      const result = await response.json();
+      if (result.code === 200) setUsersList(result.users || []);
+    } catch (err) { /* silent */ }
+    setUsersLoading(false);
+  };
+
+  // 点击导航到用户管理页时自动加载
+  useEffect(() => {
+    if (isLoggedIn && activeTab === 'users') fetchUsersList();
+  }, [isLoggedIn, activeTab]);
+
+  const openCreateDialog = () => {
+    setUserDialogMode('create');
+    setEditingUserId(null);
+    setUserForm({ username: '', password: '', role: 'consumer', real_name: '', phone: '', mail: '', description: '', status: 'active' });
+    setShowUserDialog(true);
+  };
+
+  const openEditDialog = (user) => {
+    setUserDialogMode('edit');
+    setEditingUserId(user.id);
+    setUserForm({ role: user.role, real_name: user.real_name || '', phone: user.phone || '', mail: user.mail || '', description: '', status: user.status || 'active' });
+    setShowUserDialog(true);
+  };
+
+  const openResetPwdDialog = (user) => {
+    setUserDialogMode('resetPwd');
+    setEditingUserId(user.id);
+    setUserForm({ username: user.name, password: '', role: '', real_name: '', phone: '', mail: '', description: '', status: '' });
+    setShowUserDialog(true);
+  };
+
+  const handleUserFormChange = (field, value) => {
+    setUserForm({ ...userForm, [field]: value });
+  };
+
+  const submitUserForm = async () => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+
+    if (userDialogMode === 'create') {
+      if (!userForm.username || !userForm.password || !userForm.role) {
+        showToast('请填写用户名、密码和角色');
+        return;
+      }
+      try {
+        const response = await fetch('/api/admin/users/create', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_token: parseInt(token), username: userForm.username, password: userForm.password, role: userForm.role, real_name: userForm.real_name, phone: userForm.phone, mail: userForm.mail, description: userForm.description })
+        });
+        const result = await response.json();
+        if (result.code === 200) { showToast('用户创建成功'); setShowUserDialog(false); fetchUsersList(); }
+        else showToast(result.message || '操作失败');
+      } catch (err) { showToast('网络错误'); }
+    } else if (userDialogMode === 'edit') {
+      try {
+        const body = { user_token: parseInt(token), target_id: editingUserId };
+        if (userForm.role) body.role = userForm.role;
+        if (userForm.real_name) body.real_name = userForm.real_name;
+        if (userForm.phone) body.phone = userForm.phone;
+        if (userForm.mail) body.mail = userForm.mail;
+        if (userForm.description) body.description = userForm.description;
+        if (userForm.status) body.status = userForm.status;
+        const response = await fetch('/api/admin/users/update', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const result = await response.json();
+        if (result.code === 200) { showToast('用户信息已更新'); setShowUserDialog(false); fetchUsersList(); }
+        else showToast(result.message || '更新失败');
+      } catch (err) { showToast('网络错误'); }
+    } else if (userDialogMode === 'resetPwd') {
+      if (!userForm.password || userForm.password.length < 6) {
+        showToast('密码至少6个字符');
+        return;
+      }
+      try {
+        const response = await fetch('/api/admin/users/reset_password', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_token: parseInt(token), target_id: editingUserId, new_password: userForm.password })
+        });
+        const result = await response.json();
+        if (result.code === 200) { showToast('密码重置成功'); setShowUserDialog(false); }
+        else showToast(result.message || '操作失败');
+      } catch (err) { showToast('网络错误'); }
+    }
+  };
+
+  const deleteUser = async (userId, userName) => {
+    if (!window.confirm(`确认删除用户 "${userName}" 吗？此操作不可撤销。`)) return;
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/admin/users/delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: parseInt(token), target_id: userId })
+      });
+      const result = await response.json();
+      if (result.code === 200) { showToast('用户已删除'); fetchUsersList(); }
+      else showToast(result.message || '删除失败');
+    } catch (err) { showToast('网络错误'); }
   };
 
   const normalizeApiText = (value, emptyText) => {
@@ -1541,6 +1666,7 @@ export default function App() {
           localStorage.removeItem('dpfs_token');
           localStorage.removeItem('dpfs_role');
           setIsLoggedIn(false);
+          setUserInfo(null);
           setShowLogoutModal(false);
           setLoginForm({ username: '', password: '' });
         }}
@@ -1568,6 +1694,7 @@ export default function App() {
             { key: 'activity', icon: Activity, label: '数据查询', desc: '系统溯源数据查询' },
             { key: 'risk_query', icon: ShieldCheck, label: '风险查询', desc: '安全风险评估' },
             { key: 'monitor', icon: Monitor, label: '系统监控', desc: '系统状态实时监控' },
+            { key: 'users', icon: Users, label: '用户管理', desc: '系统用户操作管理' },
             { key: 'profile', icon: User, label: '个人中心', desc: '用户信息管理' },
           ].filter(({ key }) => hasPagePermission(key)).map(({ key, icon: Icon, label, desc }) => {
             const active = activeTab === key;
@@ -1608,8 +1735,8 @@ export default function App() {
       </aside>
 
       <main className="flex-1 flex overflow-hidden">
-        <div className={`h-full overflow-y-auto custom-scrollbar transition-all duration-500 ${(activeTab === 'monitor') ? 'p-4 flex-1' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile') ? 'p-12 flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'p-12 flex-[0.9]' : 'p-12 flex-[1.3]')}`}>
-          <div className={`${(activeTab === 'monitor') ? 'max-w-full' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
+        <div className={`h-full overflow-y-auto custom-scrollbar transition-all duration-500 ${(activeTab === 'monitor') ? 'p-4 flex-1' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile' || activeTab === 'users') ? 'p-12 flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'p-12 flex-[0.9]' : 'p-12 flex-[1.3]')}`}>
+          <div className={`${(activeTab === 'monitor') ? 'max-w-full' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile' || activeTab === 'users') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
 
             {activeTab === 'dashboard' && (
               <>
@@ -2233,6 +2360,258 @@ export default function App() {
                       )}
                     </div>
                   </div>
+              </div>
+            )}
+
+            {activeTab === 'users' && (
+              <div className="animate-in fade-in slide-in-from-left-4 duration-700">
+                <header className="mb-8">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 border border-indigo-100">
+                        <Users size={20} />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">用户管理</h2>
+                        <p className="text-xs text-slate-400 mt-0.5">创建、编辑和管理系统所有用户</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button onClick={fetchUsersList} className="flex items-center gap-2 px-4 py-2.5 bg-white text-slate-600 rounded-xl font-bold text-sm border border-slate-200 hover:bg-slate-50 transition-all">
+                        <RefreshCw size={14} className={usersLoading ? 'animate-spin' : ''} />
+                        刷新
+                      </button>
+                      <button onClick={openCreateDialog} className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
+                        <UserPlus size={14} />
+                        创建用户
+                      </button>
+                    </div>
+                  </div>
+                </header>
+
+                {/* 搜索栏 */}
+                <div className="mb-6">
+                  <div className="relative">
+                    <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                    <input
+                      type="text"
+                      value={userSearch}
+                      onChange={e => setUserSearch(e.target.value)}
+                      placeholder="搜索用户名、真实姓名、电话、邮箱..."
+                      className="w-full pl-11 pr-4 py-3 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all bg-white"
+                    />
+                    {userSearch && (
+                      <button onClick={() => setUserSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-all">
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 用户列表表格 */}
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="bg-slate-50/80 text-left">
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">ID</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">用户名</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">角色</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">真实姓名</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">电话</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">邮箱</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">状态</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">创建时间</th>
+                          <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider text-right">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usersList.length === 0 ? (
+                          <tr>
+                            <td colSpan="9" className="px-5 py-12 text-center text-slate-300 text-sm">
+                              {usersLoading ? '加载中...' : '暂无用户数据'}
+                            </td>
+                          </tr>
+                        ) : (
+                          (() => {
+                            const q = userSearch.toLowerCase().trim();
+                            const filtered = q ? usersList.filter(u =>
+                              (u.name || '').toLowerCase().includes(q) ||
+                              (u.real_name || '').toLowerCase().includes(q) ||
+                              (u.phone || '').toLowerCase().includes(q) ||
+                              (u.mail || '').toLowerCase().includes(q)
+                            ) : usersList;
+                            if (q && filtered.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan="9" className="px-5 py-12 text-center text-slate-300 text-sm">
+                                    无匹配用户 "{q}"
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return filtered.map((user) => {
+                            const roleLabels = { admin: '超级管理员', supervisor: '审核员', manufacturer: '生产商', consumer: '消费者' };
+                            const roleColors = { admin: 'bg-red-50 text-red-600 border-red-100', supervisor: 'bg-blue-50 text-blue-600 border-blue-100', manufacturer: 'bg-emerald-50 text-emerald-600 border-emerald-100', consumer: 'bg-slate-50 text-slate-500 border-slate-100' };
+                            const statusColors = { active: 'bg-emerald-50 text-emerald-600', disabled: 'bg-amber-50 text-amber-600', locked: 'bg-red-50 text-red-600' };
+                            const statusLabels = { active: '正常', disabled: '禁用', locked: '锁定' };
+                            return (
+                              <tr key={user.id} className="border-t border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                <td className="px-5 py-3 text-sm text-slate-500 font-mono">{user.id}</td>
+                                <td className="px-5 py-3 text-sm font-bold text-slate-700">{user.name}</td>
+                                <td className="px-5 py-3">
+                                  <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold border ${roleColors[user.role] || 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                                    {roleLabels[user.role] || user.role}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-3 text-sm text-slate-600">{user.real_name || '-'}</td>
+                                <td className="px-5 py-3 text-sm text-slate-500 font-mono">{user.phone || '-'}</td>
+                                <td className="px-5 py-3 text-sm text-slate-500">{user.mail || '-'}</td>
+                                <td className="px-5 py-3">
+                                  <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-bold ${statusColors[user.status] || 'bg-slate-50 text-slate-500'}`}>
+                                    {statusLabels[user.status] || user.status}
+                                  </span>
+                                </td>
+                                <td className="px-5 py-3 text-xs text-slate-400 font-mono">{user.created_at ? user.created_at.slice(0, 10) : '-'}</td>
+                                <td className="px-5 py-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button onClick={() => openEditDialog(user)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all flex items-center gap-1">
+                                      <Pencil size={12} />编辑
+                                    </button>
+                                    <button onClick={() => openResetPwdDialog(user)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-600 transition-all flex items-center gap-1">
+                                      <Lock size={12} />密码
+                                    </button>
+                                    <button onClick={() => deleteUser(user.id, user.name)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-600 transition-all flex items-center gap-1">
+                                      <Trash2 size={12} />删除
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                          })()
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 用户管理弹窗 */}
+            {showUserDialog && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-300 p-4">
+                <div className="bg-white rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl border border-slate-100 transform animate-in zoom-in-95">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${userDialogMode === 'create' ? 'bg-indigo-50 text-indigo-600' : userDialogMode === 'edit' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {userDialogMode === 'create' ? <UserPlus size={22} /> : userDialogMode === 'edit' ? <Pencil size={22} /> : <Lock size={22} />}
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800">
+                          {userDialogMode === 'create' ? '创建用户' : userDialogMode === 'edit' ? '编辑用户' : '重置密码'}
+                        </h3>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {userDialogMode === 'create' ? '管理员可创建任意角色的用户' : userDialogMode === 'edit' ? '修改用户角色、状态和基本信息' : '为用户设置新密码'}
+                        </p>
+                      </div>
+                    </div>
+                    <button onClick={() => setShowUserDialog(false)} className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-all">
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {userDialogMode === 'create' && (
+                      <>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">用户名 *</label>
+                          <input type="text" value={userForm.username} onChange={e => handleUserFormChange('username', e.target.value)} placeholder="请输入用户名" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">密码 *</label>
+                          <input type="password" value={userForm.password} onChange={e => handleUserFormChange('password', e.target.value)} placeholder="至少6个字符" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">角色 *</label>
+                          <select value={userForm.role} onChange={e => handleUserFormChange('role', e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all">
+                            <option value="admin">超级管理员 (admin)</option>
+                            <option value="supervisor">审核员 (supervisor)</option>
+                            <option value="manufacturer">生产商 (manufacturer)</option>
+                            <option value="consumer">消费者 (consumer)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">真实姓名</label>
+                          <input type="text" value={userForm.real_name} onChange={e => handleUserFormChange('real_name', e.target.value)} placeholder="选填" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">电话</label>
+                          <input type="text" value={userForm.phone} onChange={e => handleUserFormChange('phone', e.target.value)} placeholder="选填" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">邮箱</label>
+                          <input type="text" value={userForm.mail} onChange={e => handleUserFormChange('mail', e.target.value)} placeholder="选填" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 transition-all" />
+                        </div>
+                      </>
+                    )}
+
+                    {userDialogMode === 'edit' && (
+                      <>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">角色</label>
+                          <select value={userForm.role} onChange={e => handleUserFormChange('role', e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all">
+                            <option value="">不变更</option>
+                            <option value="admin">超级管理员</option>
+                            <option value="supervisor">审核员</option>
+                            <option value="manufacturer">生产商</option>
+                            <option value="consumer">消费者</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">账户状态</label>
+                          <select value={userForm.status} onChange={e => handleUserFormChange('status', e.target.value)} className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 focus:outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-50 transition-all">
+                            <option value="active">正常</option>
+                            <option value="disabled">禁用</option>
+                            <option value="locked">锁定</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">真实姓名</label>
+                          <input type="text" value={userForm.real_name} onChange={e => handleUserFormChange('real_name', e.target.value)} placeholder="选填" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">电话</label>
+                          <input type="text" value={userForm.phone} onChange={e => handleUserFormChange('phone', e.target.value)} placeholder="选填" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">邮箱</label>
+                          <input type="text" value={userForm.mail} onChange={e => handleUserFormChange('mail', e.target.value)} placeholder="选填" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:border-indigo-400 transition-all" />
+                        </div>
+                      </>
+                    )}
+
+                    {userDialogMode === 'resetPwd' && (
+                      <>
+                        <div className="px-4 py-3 bg-slate-50 rounded-xl">
+                          <span className="text-xs text-slate-400">用户：</span>
+                          <span className="text-sm font-bold text-slate-700 ml-1">{userForm.username}</span>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-500 mb-1.5">新密码 *</label>
+                          <input type="password" value={userForm.password} onChange={e => handleUserFormChange('password', e.target.value)} placeholder="至少6个字符" className="w-full px-4 py-3 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 placeholder-slate-300 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-50 transition-all" />
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex gap-3 mt-8">
+                    <button onClick={() => setShowUserDialog(false)} className="flex-1 py-4 rounded-2xl bg-slate-100 font-bold text-slate-500 hover:bg-slate-200 transition-all">取消</button>
+                    <button onClick={submitUserForm} className={`flex-1 py-4 rounded-2xl font-bold text-white shadow-xl transition-all ${userDialogMode === 'create' ? 'bg-indigo-600 hover:bg-indigo-700' : userDialogMode === 'edit' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                      {userDialogMode === 'create' ? '创建' : userDialogMode === 'edit' ? '保存修改' : '重置密码'}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
