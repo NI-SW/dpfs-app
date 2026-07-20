@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Plus, Trash2, LogOut, ShieldCheck, Activity, Cpu,
+  Plus, Trash2, LogOut, ShieldCheck, ShieldAlert, Activity, Cpu,
   CheckCircle, Box, ListChecks, ArrowRight,
   User, Lock, LayoutDashboard, Zap, Search, ChevronRight,
   RefreshCw, ChevronLeft, Check, Pencil, Save, Hash, Upload, FileText,
   Play, Film, File, Download, X, Eye, UserPlus, ChevronDown,
-  Users, Monitor, HardDrive, MemoryStick, Clock, AlertTriangle
+  Users, Monitor, HardDrive, MemoryStick, Clock, AlertTriangle, Home
 } from 'lucide-react';
 import ParticleBackground from './ParticleBackground';
 import ChatPanel from './ChatPanel';
@@ -25,6 +25,23 @@ const LogoutModal = ({ isOpen, onClose, onConfirm }) => {
           <button onClick={onClose} className="flex-1 py-4 rounded-2xl bg-slate-100 font-bold text-slate-600 hover:bg-slate-200 transition-all">取消</button>
           <button onClick={onConfirm} className="flex-1 py-4 rounded-2xl bg-slate-900 font-bold text-white hover:bg-red-600 shadow-xl transition-all">确认</button>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// --- 子组件：会话过期弹窗 ---
+const SessionExpiredModal = ({ isOpen, onConfirm }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 backdrop-blur-xl animate-in fade-in duration-300 p-4">
+      <div className="bg-white rounded-[2.5rem] p-10 max-w-sm w-full shadow-2xl border border-slate-100 transform animate-in zoom-in-95">
+        <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 mb-6 mx-auto">
+          <ShieldAlert size={32} />
+        </div>
+        <h3 className="text-2xl font-black text-slate-800 mb-2 text-center">会话已过期</h3>
+        <p className="text-slate-500 mb-8 text-center">您的登录状态已超时，请重新登录。</p>
+        <button onClick={onConfirm} className="w-full py-4 rounded-2xl bg-slate-900 font-bold text-white hover:bg-emerald-600 shadow-xl transition-all">重新登录</button>
       </div>
     </div>
   );
@@ -200,6 +217,7 @@ export default function App() {
   // ─── 页面权限映射 ───
   // 每个导航页面对应的后端权限码，null 表示所有已登录用户可见
   const PAGE_PERMISSIONS = {
+    home:        null,
     dashboard:   'product:risk:create',
     trace:       'product:trace',
     make_trade:  'trade:create',
@@ -214,7 +232,7 @@ export default function App() {
     admin:        ['*'],
     supervisor:   ['product:list', 'product:drop', 'product:trace', 'product:risk:view', 'system:audit:view', 'system:monitor:view'],
     manufacturer: ['product:list', 'product:trace', 'product:risk:create', 'trade:create'],
-    consumer:     ['product:trace'],
+    consumer:     ['product:list', 'product:trace'],
   };
   // 检查当前用户是否有权限访问某页面
   const hasPagePermission = (pageKey) => {
@@ -227,6 +245,7 @@ export default function App() {
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showSessionModal, setShowSessionModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [riskReport, setRiskReport] = useState("等待系统扫描数据...");
 
@@ -265,6 +284,7 @@ export default function App() {
   const [systemData, setSystemData] = useState([]);
   const [systemTotal, setSystemTotal] = useState(0);
   const [currentSystemPage, setCurrentSystemPage] = useState(0);
+  const [systemSearchName, setSystemSearchName] = useState('');
   const [systemProBasicOpen, setSystemProBasicOpen] = useState({});
   const [systemProBasicLoading, setSystemProBasicLoading] = useState({});
   const [systemProBasicCache, setSystemProBasicCache] = useState({});
@@ -287,10 +307,16 @@ export default function App() {
   const [monitorData, setMonitorData] = useState(null);
   const [monitorLoading, setMonitorLoading] = useState(false);
   const [monitorAutoRefresh, setMonitorAutoRefresh] = useState(true);
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [traceHistory, setTraceHistory] = useState([]); // [{time, count}]
   const traceHistoryRef = useRef([]); // ref for timer closure
   const [tradeHistory, setTradeHistory] = useState([]); // [{time, count}]
   const tradeHistoryRef = useRef([]);
+
+  // --- 健康食品推荐 ---
+  const [recommendations, setRecommendations] = useState([]);
+  const [recommendTip, setRecommendTip] = useState('');
+  const [recommendLoading, setRecommendLoading] = useState(false);
   const [logData, setLogData] = useState([]); // [{time, level, msg}]
   const logHistoryRef = useRef([]);
 
@@ -307,11 +333,11 @@ export default function App() {
     if (savedToken) setIsLoggedIn(true);
   }, []);
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('home');
 
   // 获取用户首页（导航栏第一个有权限的页面）
   const getUserHomePage = () => {
-    return ['dashboard','trace','make_trade','activity','risk_query','monitor','users','profile']
+    return ['home','dashboard','trace','make_trade','activity','risk_query','monitor','users','profile']
       .find(key => hasPagePermission(key)) || 'profile';
   };
 
@@ -382,7 +408,14 @@ export default function App() {
 
   const handleSubmitData = async () => {
     const token = localStorage.getItem('dpfs_token');
-    if (!token) return alert("请先登录");
+    if (!token) return showToast("请先登录");
+
+    // 前端校验
+    if (!formData.productName?.trim()) return showToast("请输入商品全称");
+    const qty = parseInt(formData.quantity);
+    if (!qty || qty <= 0) return showToast("批次数量必须为大于0的整数");
+    const validIngredients = formData.ingredients.filter(i => i.name?.trim());
+    if (validIngredients.length === 0) return showToast("请至少添加一种成分");
 
     setIsLoading(true);
 
@@ -421,6 +454,8 @@ export default function App() {
       }
 
       console.log("解析后的对象:", result);
+
+      if (checkApiSession(result)) return;
 
       // 严格判断 code
       if (result && (result.code === 200 || Number(result.code) === 200)) {
@@ -518,7 +553,45 @@ export default function App() {
 
   const showToast = (msg) => {
     setToast({ show: true, message: msg });
-    setTimeout(() => setToast({ show: false, message: '' }), 3000);
+    setTimeout(() => setToast({ show: false, message: '' }), 5000);
+  };
+
+  // 统一会话超时处理：检测 API 返回 code=401，弹出模态框引导重新登录
+  const handleSessionExpired = () => {
+    localStorage.removeItem('dpfs_token');
+    localStorage.removeItem('dpfs_role');
+    setShowSessionModal(true);
+  };
+
+  const checkApiSession = (data) => {
+    if (data && Number(data.code) === 401) {
+      handleSessionExpired();
+      return true;
+    }
+    return false;
+  };
+
+  // --- 健康食品推荐获取 ---
+  const fetchRecommendations = async () => {
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+    setRecommendLoading(true);
+    try {
+      const response = await fetch('http://192.168.34.65:20520/api/recommend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_token: parseInt(token) })
+      });
+      const result = await response.json();
+      if (result.code === 200 && result.data) {
+        setRecommendations(result.data.recommendations || []);
+        setRecommendTip(result.data.tips || '');
+      }
+    } catch (error) {
+      console.error('获取推荐失败:', error);
+    } finally {
+      setRecommendLoading(false);
+    }
   };
 
   // --- 监控数据获取 ---
@@ -565,6 +638,13 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isLoggedIn, monitorAutoRefresh]);
 
+  // 主页时钟（每秒更新）
+  useEffect(() => {
+    if (!isLoggedIn || activeTab !== 'home') return;
+    const t = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, [isLoggedIn, activeTab]);
+
   // 日志仅在监控页显示时获取
   useEffect(() => {
     if (!isLoggedIn || activeTab !== 'monitor') return;
@@ -604,6 +684,7 @@ export default function App() {
     username: '', password: '', role: 'consumer', real_name: '', phone: '', mail: '', description: '', status: 'active'
   });
   const [userSearch, setUserSearch] = useState('');
+  const [selectedUserIds, setSelectedUserIds] = useState(new Set());
 
   const fetchUsersList = async () => {
     const token = localStorage.getItem('dpfs_token');
@@ -616,7 +697,7 @@ export default function App() {
         body: JSON.stringify({ user_token: parseInt(token) })
       });
       const result = await response.json();
-      if (result.code === 200) setUsersList(result.users || []);
+      if (result.code === 200) { setUsersList(result.users || []); setSelectedUserIds(new Set()); }
     } catch (err) { /* silent */ }
     setUsersLoading(false);
   };
@@ -716,6 +797,35 @@ export default function App() {
       if (result.code === 200) { showToast('用户已删除'); fetchUsersList(); }
       else showToast(result.message || '删除失败');
     } catch (err) { showToast('网络错误'); }
+  };
+
+  const batchDeleteUsers = async () => {
+    const ids = [...selectedUserIds];
+    if (ids.length === 0) return;
+    const nameMap = {};
+    usersList.forEach(u => { nameMap[u.id] = u.name; });
+    const names = ids.map(id => nameMap[id] || id).join('、');
+    if (!window.confirm(`确认删除以下 ${ids.length} 个用户？\n${names}\n\n此操作不可撤销。`)) return;
+
+    const token = localStorage.getItem('dpfs_token');
+    if (!token) return;
+
+    let success = 0, fail = 0;
+    for (const id of ids) {
+      try {
+        const response = await fetch('/api/admin/users/delete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_token: parseInt(token), target_id: id })
+        });
+        const result = await response.json();
+        if (result.code === 200) success++;
+        else fail++;
+      } catch { fail++; }
+    }
+    setSelectedUserIds(new Set());
+    if (success > 0) showToast(`成功删除 ${success} 个用户${fail > 0 ? `，${fail} 个失败` : ''}`);
+    else showToast('删除失败');
+    fetchUsersList();
   };
 
   const normalizeApiText = (value, emptyText) => {
@@ -999,7 +1109,7 @@ export default function App() {
 
   const handleTrace = async () => {
     const token = localStorage.getItem('dpfs_token');
-    if (!token) return alert("请先登录");
+    if (!token) return showToast("请先登录");
     if (!traceForm.traceCode.trim()) return showToast("请输入溯源码");
 
     setIsLoading(true);
@@ -1030,6 +1140,8 @@ export default function App() {
         throw new Error("后端返回的数据不是有效的 JSON 格式");
       }
 
+      if (checkApiSession(result)) return;
+
       if (result && (result.code === 200 || Number(result.code) === 200)) {
         setTraceResults({
           traceResult: result.trace_result_json || result.trace_result,
@@ -1049,7 +1161,28 @@ export default function App() {
 
   const handleMakeTrade = async () => {
     const token = localStorage.getItem('dpfs_token');
-    if (!token) return alert("请先登录");
+    if (!token) return showToast("请先登录");
+
+    // 前端校验必填字段
+    const requiredFields = [
+      { key: 'trade_schema', label: '扫描模式' },
+      { key: 'trade_product_name', label: '商品名称' },
+      { key: 'buyer', label: '买方名称' },
+      { key: 'buyer_addr', label: '买方地址' },
+      { key: 'buyer_phone', label: '买方电话' },
+      { key: 'seller', label: '卖方名称' },
+      { key: 'seller_addr', label: '卖方地址' },
+      { key: 'seller_phone', label: '卖方电话' },
+      { key: 'logistics_info', label: '物流信息' },
+      { key: 'other_info', label: '其他信息' },
+      { key: 'trade_price', label: '交易价格' },
+    ];
+    for (const f of requiredFields) {
+      if (!String(tradeForm[f.key] || '').trim()) {
+        showToast(`请填写${f.label}`);
+        return;
+      }
+    }
 
     setIsLoading(true);
     const toNumberOrZero = (v) => {
@@ -1117,7 +1250,7 @@ export default function App() {
 
   const handleFetchRiskProData = async (beginIndex = 0) => {
     const token = localStorage.getItem('dpfs_token');
-    if (!token) return alert("会话已过期，请重新登录");
+    if (!token) return showToast("会话已过期，请重新登录");
     setIsLoading(true);
     try {
       const res = await fetch('/api/list_risk_pro', {
@@ -1126,6 +1259,7 @@ export default function App() {
         body: JSON.stringify({ user_token: parseInt(token), begin: beginIndex, limit: 20 })
       });
       const result = await res.json();
+      if (checkApiSession(result)) return;
       if (result && (result.code === 200 || Number(result.code) === 200)) {
         setRiskProTotal(Number(result.total) || 0);
         setRiskProData(result.pro_list || []);
@@ -1138,32 +1272,38 @@ export default function App() {
         setCurrentRiskProPage(beginIndex);
         setRiskProOpen({});
       } else {
-        alert(result?.message || "查询失败");
+        showToast(result?.message || "查询失败");
       }
     } catch (e) {
-      alert(e?.message || "查询失败");
+      showToast(e?.message || "查询失败");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleFetchSystemData = async (beginIndex = 0) => {
+  const handleFetchSystemData = async (beginIndex = 0, searchName = undefined) => {
     const token = localStorage.getItem('dpfs_token');
-    if (!token) return alert("会话已过期，请重新登录");
+    if (!token) return showToast("会话已过期，请重新登录");
+    const name = searchName !== undefined ? searchName : systemSearchName;
     setIsLoading(true);
     try {
+      const checkPayload = { user_token: parseInt(token), begin: 0, limit: 1 };
+      if (name) checkPayload.name = name;
       const checkRes = await fetch('/api/list_tracable_pro', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_token: parseInt(token), begin: 0, limit: 1 })
+        body: JSON.stringify(checkPayload)
       });
       const checkResult = await checkRes.json();
+      if (checkApiSession(checkResult)) return;
       if (checkResult.code === 200) {
         setSystemTotal(checkResult.total);
+        const fetchPayload = { user_token: parseInt(token), begin: beginIndex, limit: 20 };
+        if (name) fetchPayload.name = name;
         const fetchRes = await fetch('/api/list_tracable_pro', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_token: parseInt(token), begin: beginIndex, limit: 20 })
+          body: JSON.stringify(fetchPayload)
         });
         const fetchResult = await fetchRes.json();
         if (fetchResult.code === 200) {
@@ -1355,7 +1495,7 @@ export default function App() {
     if (systemProBasicCache[key] || systemProBasicLoading[key]) return;
 
     const token = localStorage.getItem('dpfs_token');
-    if (!token) return alert("会话已过期，请重新登录");
+    if (!token) return showToast("会话已过期，请重新登录");
 
     setSystemProBasicLoading((prev) => ({ ...prev, [key]: true }));
     try {
@@ -1397,7 +1537,7 @@ export default function App() {
   };
 
   const handleLogin = async () => {
-    if (!loginForm.username || !loginForm.password) return alert("请完整输入账号和访问密钥");
+    if (!loginForm.username || !loginForm.password) return showToast("请输入账号和密码");
     setIsLoading(true);
     try {
       const response = await fetch('/api/login', {
@@ -1410,20 +1550,22 @@ export default function App() {
         localStorage.setItem('dpfs_token', result.user_token);
         localStorage.setItem('dpfs_role', result.role);
         setIsLoggedIn(true);
+      } else if (result.code === 403) {
+        showToast("账号或密码错误，请重新输入");
       } else {
-        alert(result.message || "身份验证失败");
+        showToast(result.message || "登录失败，请稍后重试");
       }
     } catch (error) {
-      alert("连接失败");
+      showToast("无法连接服务器，请检查网络");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleRegister = async () => {
-    if (!registerForm.username || !registerForm.password) return alert("请完整输入用户名和密码");
-    if (registerForm.password.length < 6) return alert("密码长度不能少于6位");
-    if (registerForm.password !== registerForm.confirmPassword) return alert("两次输入的密码不一致");
+    if (!registerForm.username || !registerForm.password) return showToast("请完整输入用户名和密码");
+    if (registerForm.password.length < 6) return showToast("密码长度不能少于6位");
+    if (registerForm.password !== registerForm.confirmPassword) return showToast("两次输入的密码不一致");
     setRegisterLoading(true);
     try {
       const response = await fetch('/api/register', {
@@ -1437,15 +1579,15 @@ export default function App() {
       });
       const result = await response.json();
       if (result.code === 200) {
-        alert("注册成功！请使用新账号登录。");
+        showToast("注册成功！请使用新账号登录");
         setShowRegister(false);
         setLoginForm({ username: registerForm.username, password: '' });
         setRegisterForm({ username: '', password: '', confirmPassword: '', role: 'consumer' });
       } else {
-        alert(result.message || "注册失败");
+        showToast(result.message || "注册失败");
       }
     } catch (error) {
-      alert("连接失败");
+      showToast("连接失败，请检查网络");
     } finally {
       setRegisterLoading(false);
     }
@@ -1543,6 +1685,13 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col font-sans text-white relative overflow-hidden">
         <ParticleBackground />
+        {/* 登录页提示 */}
+        {toast.show && (
+          <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[200] px-8 py-4 bg-red-600 text-white rounded-2xl shadow-2xl animate-in slide-in-from-top-4 duration-300 font-bold border border-red-400/30 flex items-center gap-3">
+            <ShieldAlert size={20} className="shrink-0" />
+            {toast.message}
+          </div>
+        )}
         <header className="relative z-10 w-full p-8 md:p-12 flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-emerald-600 rounded-xl text-white shadow-lg shadow-emerald-950">
@@ -1577,7 +1726,7 @@ export default function App() {
                   <div className="space-y-6">
                     <div className="relative group">
                       <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
-                      <input type="text" value={loginForm.username} onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })} placeholder="输入管理账号" className="w-full pl-14 pr-6 py-5 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg" />
+                      <input type="text" value={loginForm.username} onChange={(e) => setLoginForm({ ...loginForm, username: e.target.value })} placeholder="输入管理账号" className="w-full pl-14 pr-6 py-5 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg" onKeyDown={(e) => e.key === 'Enter' && handleLogin()} />
                     </div>
                     <div className="relative group">
                       <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
@@ -1611,7 +1760,7 @@ export default function App() {
                     </div>
                     <div className="relative group">
                       <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors" size={20} />
-                      <input type="password" value={registerForm.confirmPassword} onChange={(e) => setRegisterForm({ ...registerForm, confirmPassword: e.target.value })} placeholder="确认密码" className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white" />
+                      <input type="password" value={registerForm.confirmPassword} onChange={(e) => setRegisterForm({ ...registerForm, confirmPassword: e.target.value })} placeholder="确认密码" className="w-full pl-14 pr-6 py-4 rounded-2xl bg-slate-900/50 border border-slate-800 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all text-lg text-white" onKeyDown={(e) => e.key === 'Enter' && handleRegister()} />
                     </div>
                     <div className="relative group">
                       <ShieldCheck className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-emerald-500 transition-colors z-10" size={20} />
@@ -1672,6 +1821,16 @@ export default function App() {
         }}
       />
 
+      <SessionExpiredModal
+        isOpen={showSessionModal}
+        onConfirm={() => {
+          setShowSessionModal(false);
+          setIsLoggedIn(false);
+          setUserInfo(null);
+          setLoginForm({ username: '', password: '' });
+        }}
+      />
+
       <aside className="w-56 flex flex-col bg-white border-r border-slate-100 z-50 shrink-0">
         {/* Logo */}
         <div className="px-5 py-6 flex items-center gap-3 border-b border-slate-50">
@@ -1688,6 +1847,7 @@ export default function App() {
         <nav className="flex-1 px-3 py-5 space-y-1">
           <div className="px-3 mb-3 text-[9px] font-black tracking-[0.2em] uppercase text-slate-300">功能导航</div>
           {[
+            { key: 'home', icon: Home, label: '系统主页', desc: '概览与快捷入口' },
             { key: 'dashboard', icon: LayoutDashboard, label: '信息录入', desc: '产品风险评估' },
             { key: 'trace', icon: Search, label: '商品溯源', desc: '溯源链路查询' },
             { key: 'make_trade', icon: Plus, label: '创建交易', desc: '交易信息登记' },
@@ -1735,8 +1895,157 @@ export default function App() {
       </aside>
 
       <main className="flex-1 flex overflow-hidden">
-        <div className={`h-full overflow-y-auto custom-scrollbar transition-all duration-500 ${(activeTab === 'monitor') ? 'p-4 flex-1' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile' || activeTab === 'users') ? 'p-12 flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'p-12 flex-[0.9]' : 'p-12 flex-[1.3]')}`}>
-          <div className={`${(activeTab === 'monitor') ? 'max-w-full' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile' || activeTab === 'users') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
+        <div className={`h-full overflow-y-auto custom-scrollbar transition-all duration-500 ${(activeTab === 'monitor' || activeTab === 'home') ? 'p-4 flex-1' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile' || activeTab === 'users') ? 'p-12 flex-1 bg-slate-50/50' : (activeTab === 'trace' ? 'p-12 flex-[0.9]' : 'p-12 flex-[1.3]')}`}>
+          <div className={`${(activeTab === 'monitor' || activeTab === 'home') ? 'max-w-full' : (activeTab === 'activity' || activeTab === 'make_trade' || activeTab === 'risk_query' || activeTab === 'profile' || activeTab === 'users') ? 'max-w-6xl' : 'max-w-3xl'} mx-auto`}>
+
+            {activeTab === 'home' && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col" style={{gap:'16px'}}>
+
+                {/* ── 欢迎横幅 ── */}
+                <div className="relative overflow-hidden rounded-2xl p-8 flex items-center justify-between" style={{background:'linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#134e4a 100%)'}}>
+                  <div className="absolute inset-0 opacity-[0.06] pointer-events-none" style={{backgroundImage:'radial-gradient(#10b981 1px, transparent 1px)',backgroundSize:'24px 24px'}}></div>
+                  <div className="relative z-10 text-white">
+                    <div className="flex items-center gap-2.5 mb-3">
+                      <div className="p-2 bg-emerald-500/20 rounded-lg border border-emerald-500/30">
+                        <ShieldCheck size={18} className="text-emerald-400" />
+                      </div>
+                      <span className="text-[11px] font-mono font-bold tracking-[0.3em] text-emerald-400 uppercase">DPFS Platform</span>
+                    </div>
+                    <h2 className="text-3xl font-black tracking-tight mb-2">
+                      欢迎回来，{userInfo?.username || localStorage.getItem('dpfs_role') || '用户'}
+                    </h2>
+                    <p className="text-slate-400 text-sm max-w-xl">
+                      基于DPFS的农产品安全风险智能评估系统 — 实时溯源、AI风险评估、全链路数据管理
+                    </p>
+                  </div>
+                  <div className="relative z-10 text-right">
+                    <div className="text-[11px] text-emerald-400/60 font-mono uppercase tracking-widest mb-1">当前时间</div>
+                    <div className="text-2xl font-black text-white font-mono tracking-tight" style={{fontFamily:'Orbitron,sans-serif'}}>
+                      {currentTime.toLocaleTimeString('zh-CN',{hour12:false})}
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {currentTime.toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'})}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── KPI 卡片行 ── */}
+                <div className="grid grid-cols-4" style={{gap:'16px'}}>
+                  {[
+                    { label:'溯源产品', value: monitorData?.total_products ?? '-', sub:'Total Products', icon:<Box size={18} className="text-cyan-500" />, accent:'text-cyan-600', bg:'rgba(6,182,212,.06)', border:'rgba(6,182,212,.15)' },
+                    { label:'风险产品', value: monitorData?.risk_products ?? '-', sub:'Risk Products', icon:<AlertTriangle size={18} className={(monitorData?.risk_products ?? 0) > 0 ? 'text-rose-500' : 'text-slate-400'} />, accent:(monitorData?.risk_products ?? 0) > 0 ? 'text-rose-600' : 'text-slate-700', bg:(monitorData?.risk_products ?? 0) > 0 ? 'rgba(244,63,94,.06)' : 'rgba(248,250,252,.8)', border:(monitorData?.risk_products ?? 0) > 0 ? 'rgba(244,63,94,.2)' : 'rgba(16,185,129,.1)' },
+                    { label:'溯源查询', value: monitorData?.trace_count_per_min ?? '-', sub:'Queries / min', icon:<Search size={18} className="text-emerald-500" />, accent:'text-emerald-600', bg:'rgba(16,185,129,.06)', border:'rgba(16,185,129,.15)' },
+                    { label:'在线用户', value: monitorData?.active_users ?? '-', sub:'Active Sessions', icon:<User size={18} className="text-violet-500" />, accent:'text-violet-600', bg:'rgba(139,92,246,.06)', border:'rgba(139,92,246,.15)' },
+                  ].map((card,i)=>(
+                    <div key={i} className="relative overflow-hidden rounded-xl p-5 transition-all hover:shadow-lg hover:-translate-y-0.5 bg-white border" style={{borderColor:card.border}}>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{card.label}</span>
+                        <div className="p-1.5 rounded-lg" style={{background:card.bg}}>{card.icon}</div>
+                      </div>
+                      <div className="text-4xl font-black leading-none" style={{color:card.accent.replace('text-','').includes('rose')?'#e11d48':card.accent.includes('cyan')?'#0891b2':card.accent.includes('emerald')?'#059669':'#7c3aed'}}>{card.value}</div>
+                      <div className="text-[10px] text-slate-300 mt-2 font-mono uppercase tracking-wider">{card.sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── 快捷入口 + 健康推荐 ── */}
+                <div style={{display:'flex',gap:'16px'}} className="flex-1 min-h-0">
+                  {/* 左：快捷入口 */}
+                  <div style={{flex:'1.4'}} className="rounded-xl p-6 bg-white border border-slate-100">
+                    <div className="flex items-center gap-2 mb-5">
+                      <div className="w-1.5 h-5 bg-emerald-500 rounded-full"></div>
+                      <h3 className="text-sm font-black text-slate-800 tracking-wide">快捷操作</h3>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { key:'dashboard', icon:LayoutDashboard, label:'信息录入', desc:'产品风险评估', color:'text-emerald-600', bg:'bg-emerald-50', hover:'hover:bg-emerald-500 hover:text-white' },
+                        { key:'trace', icon:Search, label:'商品溯源', desc:'溯源链路查询', color:'text-cyan-600', bg:'bg-cyan-50', hover:'hover:bg-cyan-500 hover:text-white' },
+                        { key:'make_trade', icon:Plus, label:'创建交易', desc:'交易信息登记', color:'text-blue-600', bg:'bg-blue-50', hover:'hover:bg-blue-500 hover:text-white' },
+                        { key:'activity', icon:Activity, label:'数据查询', desc:'系统溯源数据', color:'text-violet-600', bg:'bg-violet-50', hover:'hover:bg-violet-500 hover:text-white' },
+                        { key:'risk_query', icon:ShieldCheck, label:'风险查询', desc:'安全风险评估', color:'text-amber-600', bg:'bg-amber-50', hover:'hover:bg-amber-500 hover:text-white' },
+                        { key:'monitor', icon:Monitor, label:'系统监控', desc:'实时状态监控', color:'text-rose-600', bg:'bg-rose-50', hover:'hover:bg-rose-500 hover:text-white' },
+                      ].filter(item => hasPagePermission(item.key)).map(item => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            key={item.key}
+                            onClick={() => { setActiveTab(item.key); if (item.key !== 'profile') setProfileView('info'); }}
+                            className={`group p-4 rounded-xl border border-slate-100 transition-all text-left ${item.hover}`}
+                          >
+                            <div className={`p-2 rounded-lg ${item.bg} ${item.color} mb-3 inline-block transition-all group-hover:bg-white/20`}>
+                              <Icon size={20} />
+                            </div>
+                            <div className="text-sm font-bold text-slate-700 group-hover:text-white transition-colors">{item.label}</div>
+                            <div className="text-[10px] text-slate-400 group-hover:text-white/70 transition-colors mt-0.5">{item.desc}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* 右：AI 智能推荐 */}
+                  <div style={{flex:'1'}} className="rounded-xl p-5 bg-white border border-slate-100 flex flex-col overflow-hidden">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-1.5 h-5 bg-emerald-500 rounded-full"></div>
+                      <h3 className="text-sm font-black text-slate-800 tracking-wide">🥗 AI 健康推荐</h3>
+                      <button
+                        onClick={fetchRecommendations}
+                        disabled={recommendLoading}
+                        className="ml-auto flex items-center gap-1.5 text-[10px] text-emerald-600 font-bold hover:text-emerald-700 transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw size={11} className={recommendLoading ? 'animate-spin' : ''} />
+                        {recommendLoading ? '生成中...' : '刷新'}
+                      </button>
+                    </div>
+
+                    {recommendLoading && recommendations.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400">
+                        <div className="w-8 h-8 border-2 border-emerald-200 border-t-emerald-500 rounded-full animate-spin"></div>
+                        <span className="text-xs font-bold">AI 正在为您生成个性化推荐...</span>
+                      </div>
+                    ) : recommendations.length > 0 ? (
+                      <div className="flex-1 flex flex-col gap-2.5 overflow-y-auto custom-scrollbar">
+                        {recommendations.map((item, i) => (
+                          <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-slate-50/80 hover:bg-emerald-50/60 transition-all group">
+                            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-100 to-emerald-50 flex items-center justify-center text-emerald-600 text-sm font-black shrink-0 group-hover:scale-110 transition-transform">
+                              {['🍎','🥦','🌾','🥛','🐟'][i] || '🍽️'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-xs font-black text-slate-800 truncate">{item.name}</span>
+                                <span className="text-amber-400 text-[10px] tracking-tight">{'★'.repeat(item.stars || 0)}{'☆'.repeat(5 - (item.stars || 0))}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 leading-relaxed line-clamp-2">{item.reason}</p>
+                            </div>
+                          </div>
+                        ))}
+                        {recommendTip && (
+                          <div className="mt-auto pt-2 border-t border-slate-100">
+                            <p className="text-[10px] text-emerald-600 font-medium leading-relaxed flex items-start gap-1.5">
+                              <span className="text-sm">💡</span>
+                              <span>{recommendTip}</span>
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400">
+                        <span className="text-3xl">🥗</span>
+                        <span className="text-xs font-bold text-slate-500">基于系统已有商品为您推荐</span>
+                        <button
+                          onClick={fetchRecommendations}
+                          disabled={recommendLoading}
+                          className="mt-1 px-5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 transition-all shadow-md disabled:opacity-50"
+                        >
+                          {recommendLoading ? '生成中...' : '立即生成推荐'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            )}
 
             {activeTab === 'dashboard' && (
               <>
@@ -1758,10 +2067,10 @@ export default function App() {
                       <h3 className="font-bold text-lg">核心商品参数</h3>
                     </div>
                     <div className="grid grid-cols-3 gap-8">
-                      {[{ label: '扫描模式', key: 'modeName', ph: '标准模式' }, { label: '商品全称', key: 'productName', ph: '输入商品名' }, { label: '批次数量', key: 'quantity', ph: '0' }].map(item => (
+                      {[{ label: '扫描模式', key: 'modeName', ph: '标准模式', type: 'text' }, { label: '商品全称', key: 'productName', ph: '输入商品名', type: 'text' }, { label: '批次数量', key: 'quantity', ph: '0', type: 'number' }].map(item => (
                         <div key={item.key}>
-                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">{item.label}</label>
-                          <input onChange={(e) => handleInputChange(item.key, e.target.value)} className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all font-semibold text-slate-700" placeholder={item.ph} />
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">{item.label}{item.key !== 'modeName' && <span className="text-red-400 ml-0.5">*</span>}</label>
+                          <input type={item.type} min={item.type === 'number' ? 1 : undefined} onChange={(e) => handleInputChange(item.key, e.target.value)} className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-transparent focus:bg-white focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 outline-none transition-all font-semibold text-slate-700" placeholder={item.ph} />
                         </div>
                       ))}
                     </div>
@@ -1905,16 +2214,16 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                       {[
-                        { label: '发生交易的溯源组', key: 'trade_schema', ph: '输入溯源组' },
-                        { label: '发生交易的产品名称', key: 'trade_product_name', ph: '输入产品名称' },
-                        { label: '发生交易的产品起始ID', key: 'trade_product_start_id', ph: '输入起始ID' },
-                        { label: '发生交易的产品数量', key: 'trade_product_number', ph: '输入数量' },
-                        { label: '发生金额', key: 'trade_price', ph: '输入金额' },
-                        { label: '物流信息', key: 'logistics_info', ph: '输入物流信息' },
-                        { label: '其它信息', key: 'other_info', ph: '输入其它信息' }
+                        { label: '发生交易的溯源组', key: 'trade_schema', ph: '输入溯源组', required: true },
+                        { label: '发生交易的产品名称', key: 'trade_product_name', ph: '输入产品名称', required: true },
+                        { label: '发生交易的产品起始ID', key: 'trade_product_start_id', ph: '输入起始ID', required: false },
+                        { label: '发生交易的产品数量', key: 'trade_product_number', ph: '输入数量', required: false },
+                        { label: '发生金额', key: 'trade_price', ph: '输入金额', required: true },
+                        { label: '物流信息', key: 'logistics_info', ph: '输入物流信息', required: true },
+                        { label: '其它信息', key: 'other_info', ph: '输入其它信息', required: true }
                       ].map((f) => (
                         <div key={f.key}>
-                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">{f.label}</label>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">{f.label}{f.required && <span className="text-red-400 ml-0.5">*</span>}</label>
                           <input
                             type={(f.key === 'trade_product_start_id' || f.key === 'trade_product_number') ? 'number' : 'text'}
                             value={tradeForm[f.key]}
@@ -1934,15 +2243,15 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                       {[
-                        { label: '买方名称', key: 'buyer', ph: '输入买方名称' },
-                        { label: '买方地址', key: 'buyer_addr', ph: '输入买方地址' },
-                        { label: '买方联系方式', key: 'buyer_phone', ph: '输入买方联系方式' },
-                        { label: '卖方名称', key: 'seller', ph: '输入卖方名称' },
-                        { label: '卖方地址', key: 'seller_addr', ph: '输入卖方地址' },
-                        { label: '卖方联系方式', key: 'seller_phone', ph: '输入卖方联系方式' }
+                        { label: '买方名称', key: 'buyer', ph: '输入买方名称', required: true },
+                        { label: '买方地址', key: 'buyer_addr', ph: '输入买方地址', required: true },
+                        { label: '买方联系方式', key: 'buyer_phone', ph: '输入买方联系方式', required: true },
+                        { label: '卖方名称', key: 'seller', ph: '输入卖方名称', required: true },
+                        { label: '卖方地址', key: 'seller_addr', ph: '输入卖方地址', required: true },
+                        { label: '卖方联系方式', key: 'seller_phone', ph: '输入卖方联系方式', required: true }
                       ].map((f) => (
                         <div key={f.key}>
-                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">{f.label}</label>
+                          <label className="block text-[11px] font-bold text-slate-400 uppercase mb-3 ml-1">{f.label}<span className="text-red-400 ml-0.5">*</span></label>
                           <input
                             value={tradeForm[f.key]}
                             onChange={(e) => setTradeForm({ ...tradeForm, [f.key]: e.target.value })}
@@ -2030,7 +2339,7 @@ export default function App() {
                       })}
                     </tbody>
                   </table>
-                  {riskProData.length === 0 && !isLoading && <div className="py-20 text-center text-slate-300 italic font-medium">点击上方按钮查询高风险商品</div>}
+                  {riskProData.length === 0 && !isLoading && <div className="py-20 text-center text-slate-300 italic font-medium">暂无高风险商品数据</div>}
                 </div>
 
                 {riskProTotal > 0 && (
@@ -2045,24 +2354,56 @@ export default function App() {
 
             {activeTab === 'activity' && (
               <div className="animate-in fade-in slide-in-from-left-4 duration-700">
-                <header className="mb-8 flex justify-between items-center">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 border border-emerald-100">
-                      <Activity size={20} />
+                <header className="mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 border border-emerald-100">
+                        <Activity size={20} />
+                      </div>
+                      <div>
+                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">系统溯源数据查询</h2>
+                        <p className="text-xs text-slate-400 mt-0.5">查询系统中已录入的产品溯源数据</p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-2xl font-black text-slate-800 tracking-tight">系统溯源数据查询</h2>
-                      <p className="text-xs text-slate-400 mt-0.5">查询系统中已录入的产品溯源数据</p>
-                    </div>
+                    <button
+                      onClick={() => { setSystemSearchName(''); handleFetchSystemData(0, ''); }}
+                      disabled={isLoading}
+                      className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50"
+                    >
+                      <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+                      查询全部
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleFetchSystemData(0)}
-                    disabled={isLoading}
-                    className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-500 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50"
-                  >
-                    <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
-                    查询系统数据
-                  </button>
+                  {/* 搜索栏 */}
+                  <div className="flex items-center gap-3">
+                    <div className="relative flex-1 max-w-md">
+                      <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" />
+                      <input
+                        type="text"
+                        value={systemSearchName}
+                        onChange={(e) => setSystemSearchName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleFetchSystemData(0); }}
+                        placeholder="输入产品名称搜索（前缀匹配）"
+                        className="w-full pl-11 pr-4 py-3 rounded-xl bg-slate-50 border border-slate-200/60 focus:bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all text-sm font-medium text-slate-700 placeholder:text-slate-300"
+                      />
+                    </div>
+                    <button
+                      onClick={() => handleFetchSystemData(0)}
+                      disabled={isLoading}
+                      className="px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-emerald-600 transition-all disabled:opacity-50"
+                    >
+                      <Search size={16} />
+                      搜索
+                    </button>
+                    {systemSearchName && (
+                      <button
+                        onClick={() => { setSystemSearchName(''); handleFetchSystemData(0, ''); }}
+                        className="px-4 py-3 bg-slate-100 text-slate-500 rounded-xl font-bold text-sm hover:bg-slate-200 transition-all"
+                      >
+                        清除
+                      </button>
+                    )}
+                  </div>
                 </header>
 
                 {systemData.length === 0 && !isLoading ? (
@@ -2348,11 +2689,18 @@ export default function App() {
                             const isWarn = entry.level === 'NOTIC';
                             const accentColor = isError ? '#ef4444' : isWarn ? '#f59e0b' : '#64748b';
                             const bgColor = isError ? 'rgba(239,68,68,.06)' : isWarn ? 'rgba(245,158,11,.05)' : 'transparent';
+                            // Some log entries contain literal \n sequences from concatenated log lines;
+                            // split them into separate visual lines for readability
+                            const msgLines = (entry.msg || '').split(/\\n|\n/).filter(l => l.trim());
                             return (
                               <div key={i} className="flex items-start gap-2 px-2 py-1 rounded text-[10px] font-mono hover:bg-slate-50 transition-colors" style={{background: bgColor}}>
                                 <span className="text-slate-300 shrink-0 w-[85px] pt-[1px]">{entry.time?.slice(11,19) || ''}</span>
                                 <span className="shrink-0 mt-[1px] w-[44px] text-center font-bold rounded px-1" style={{color: accentColor, background: `${accentColor}15`, fontSize:'9px'}}>{entry.level}</span>
-                                <span className="text-slate-600 break-all leading-relaxed" style={{lineHeight:'1.4'}}>{entry.msg}</span>
+                                <span className="text-slate-600 break-all leading-relaxed" style={{lineHeight:'1.4'}}>
+                                  {msgLines.map((line, li) => (
+                                    <span key={li} className="block">{line}</span>
+                                  ))}
+                                </span>
                               </div>
                             );
                           })}
@@ -2377,6 +2725,12 @@ export default function App() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
+                      {selectedUserIds.size > 0 && (
+                        <button onClick={batchDeleteUsers} className="flex items-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded-xl font-bold text-sm hover:bg-red-700 transition-all shadow-lg shadow-red-200">
+                          <Trash2 size={14} />
+                          删除选中 ({selectedUserIds.size})
+                        </button>
+                      )}
                       <button onClick={fetchUsersList} className="flex items-center gap-2 px-4 py-2.5 bg-white text-slate-600 rounded-xl font-bold text-sm border border-slate-200 hover:bg-slate-50 transition-all">
                         <RefreshCw size={14} className={usersLoading ? 'animate-spin' : ''} />
                         刷新
@@ -2414,6 +2768,40 @@ export default function App() {
                     <table className="w-full">
                       <thead>
                         <tr className="bg-slate-50/80 text-left">
+                          <th className="px-3 py-3 w-10">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              checked={(() => {
+                                const q = userSearch.toLowerCase().trim();
+                                const filtered = q ? usersList.filter(u =>
+                                  (u.name || '').toLowerCase().includes(q) ||
+                                  (u.real_name || '').toLowerCase().includes(q) ||
+                                  (u.phone || '').toLowerCase().includes(q) ||
+                                  (u.mail || '').toLowerCase().includes(q)
+                                ) : usersList;
+                                return filtered.length > 0 && filtered.every(u => selectedUserIds.has(u.id));
+                              })()}
+                              onChange={(e) => {
+                                const q = userSearch.toLowerCase().trim();
+                                const filtered = q ? usersList.filter(u =>
+                                  (u.name || '').toLowerCase().includes(q) ||
+                                  (u.real_name || '').toLowerCase().includes(q) ||
+                                  (u.phone || '').toLowerCase().includes(q) ||
+                                  (u.mail || '').toLowerCase().includes(q)
+                                ) : usersList;
+                                if (e.target.checked) {
+                                  setSelectedUserIds(prev => new Set([...prev, ...filtered.map(u => u.id)]));
+                                } else {
+                                  setSelectedUserIds(prev => {
+                                    const next = new Set(prev);
+                                    filtered.forEach(u => next.delete(u.id));
+                                    return next;
+                                  });
+                                }
+                              }}
+                            />
+                          </th>
                           <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">ID</th>
                           <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">用户名</th>
                           <th className="px-5 py-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">角色</th>
@@ -2428,7 +2816,7 @@ export default function App() {
                       <tbody>
                         {usersList.length === 0 ? (
                           <tr>
-                            <td colSpan="9" className="px-5 py-12 text-center text-slate-300 text-sm">
+                            <td colSpan="10" className="px-5 py-12 text-center text-slate-300 text-sm">
                               {usersLoading ? '加载中...' : '暂无用户数据'}
                             </td>
                           </tr>
@@ -2444,7 +2832,7 @@ export default function App() {
                             if (q && filtered.length === 0) {
                               return (
                                 <tr>
-                                  <td colSpan="9" className="px-5 py-12 text-center text-slate-300 text-sm">
+                                  <td colSpan="10" className="px-5 py-12 text-center text-slate-300 text-sm">
                                     无匹配用户 "{q}"
                                   </td>
                                 </tr>
@@ -2457,6 +2845,21 @@ export default function App() {
                             const statusLabels = { active: '正常', disabled: '禁用', locked: '锁定' };
                             return (
                               <tr key={user.id} className="border-t border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                <td className="px-3 py-3">
+                                  <input
+                                    type="checkbox"
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                    checked={selectedUserIds.has(user.id)}
+                                    onChange={(e) => {
+                                      setSelectedUserIds(prev => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) next.add(user.id);
+                                        else next.delete(user.id);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </td>
                                 <td className="px-5 py-3 text-sm text-slate-500 font-mono">{user.id}</td>
                                 <td className="px-5 py-3 text-sm font-bold text-slate-700">{user.name}</td>
                                 <td className="px-5 py-3">
